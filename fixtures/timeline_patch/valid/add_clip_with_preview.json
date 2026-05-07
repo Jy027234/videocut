@@ -1,0 +1,58 @@
+{
+  "name": "add_clip_with_preview",
+  "request": {
+    "project_id": "proj_demo_0001",
+    "base_version_id": "ver_0001",
+    "timeline_patch": {
+      "operations": [
+        {
+          "op": "add_clip",
+          "track_id": "v1",
+          "clip_id": "clip_intro_0001",
+          "asset_ref": {
+            "artifact_id": "art_asset_demo_0001",
+            "artifact_type": "normalized_video"
+          },
+          "timeline_start_seconds": 0.0,
+          "source_in_seconds": 0.0,
+          "source_out_seconds": 12.5
+        },
+        {
+          "op": "add_text",
+          "track_id": "text1",
+          "text_id": "txt_title_0001",
+          "text": "P0 demo title",
+          "start_seconds": 0.0,
+          "end_seconds": 3.0,
+          "style": "title_default"
+        }
+      ]
+    },
+    "change_reason": "Create a short preview intro for the P0 demo.",
+    "requested_preview": true
+  },
+  "expected_output": {
+    "project_id": "proj_demo_0001",
+    "new_version_id": "ver_0002",
+    "timeline_summary": {
+      "duration_seconds": 12.5,
+      "video_tracks": 1,
+      "audio_tracks": 0,
+      "text_tracks": 1
+    },
+    "warnings": [],
+    "preview_artifact_ref": {
+      "artifact_id": "art_preview_demo_0001",
+      "artifact_type": "preview_video",
+      "mime_type": "video/mp4",
+      "size_bytes": 1048576,
+      "checksum": "sha256:3f786850e387550fdab836ed7e6dc881de23001b",
+      "data_class": "sensitive",
+      "retention_policy": "preview_7d",
+      "expires_at": "2026-05-14T00:00:00Z",
+      "access_policy": "tenant_and_share_scoped",
+      "download_url": "https://artifacts.local/download/art_preview_demo_0001?token=redacted"
+    },
+    "artifact_refs": []
+  }
+}

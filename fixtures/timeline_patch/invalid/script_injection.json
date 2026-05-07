@@ -1,0 +1,20 @@
+{
+  "name": "script_injection",
+  "request": {
+    "project_id": "proj_demo_0001",
+    "base_version_id": "ver_0001",
+    "timeline_patch": {
+      "operations": [
+        {
+          "op": "set_effect",
+          "clip_id": "clip_intro_0001",
+          "effect_id": "registered.blur",
+          "script": "ffmpeg -i input.mp4 output.mp4"
+        }
+      ]
+    },
+    "change_reason": "Attempt to inject a raw command through an effect payload.",
+    "requested_preview": false
+  },
+  "expected_error_code": "invalid_schema"
+}

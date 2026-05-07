@@ -1,0 +1,33 @@
+{
+  "request": {
+    "language": "en",
+    "segments": [
+      {
+        "id": 1,
+        "text": "Hello from the speech QA fixture.",
+        "start": 0.0,
+        "end": 1.8,
+        "start_seconds": 0.0,
+        "end_seconds": 1.8
+      },
+      {
+        "id": 2,
+        "text": "Subtitle alignment should stay structured.",
+        "start": 1.8,
+        "end": 4.0,
+        "start_seconds": 1.8,
+        "end_seconds": 4.0
+      }
+    ],
+    "subtitles": [
+      {
+        "id": "sub_001",
+        "text": "Hello from the speech QA fixture."
+      },
+      {
+        "id": "sub_002",
+        "text": "Subtitle alignment should stay structured."
+      }
+    ]
+  }
+}

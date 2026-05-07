@@ -1,0 +1,22 @@
+{
+  "name": "unregistered_effect",
+  "request": {
+    "project_id": "proj_demo_0001",
+    "base_version_id": "ver_0001",
+    "timeline_patch": {
+      "operations": [
+        {
+          "op": "set_effect",
+          "clip_id": "clip_intro_0001",
+          "effect_id": "unregistered.effect",
+          "parameters": {
+            "amount": 0.8
+          }
+        }
+      ]
+    },
+    "change_reason": "Attempt to use an effect that is not in the registered effect catalog.",
+    "requested_preview": false
+  },
+  "expected_error_code": "unregistered_effect"
+}

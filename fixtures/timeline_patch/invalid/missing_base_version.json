@@ -1,0 +1,19 @@
+{
+  "name": "missing_base_version",
+  "request": {
+    "project_id": "proj_demo_0001",
+    "timeline_patch": {
+      "operations": [
+        {
+          "op": "move_clip",
+          "clip_id": "clip_intro_0001",
+          "track_id": "v1",
+          "timeline_start_seconds": 2.0
+        }
+      ]
+    },
+    "change_reason": "Move clip without declaring the version baseline.",
+    "requested_preview": false
+  },
+  "expected_error_code": "invalid_schema"
+}

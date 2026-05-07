@@ -1,0 +1,38 @@
+{
+  "run_id": "run_demo_20260507_0001",
+  "tool_call_id": "tool_call_demo_0001",
+  "status": "succeeded",
+  "output": {
+    "timeline_summary": {
+      "duration_seconds": 12.5,
+      "video_tracks": 1,
+      "audio_tracks": 1
+    }
+  },
+  "preview_artifact_ref": {
+    "artifact_id": "art_preview_demo_0001",
+    "artifact_type": "preview_video",
+    "mime_type": "video/mp4",
+    "size_bytes": 1048576,
+    "checksum": "sha256:3f786850e387550fdab836ed7e6dc881de23001b",
+    "data_class": "sensitive",
+    "retention_policy": "preview_7d",
+    "expires_at": "2026-05-14T00:00:00Z",
+    "access_policy": "tenant_and_share_scoped",
+    "download_url": "https://artifacts.local/download/art_preview_demo_0001?token=redacted"
+  },
+  "artifact_refs": [
+    {
+      "artifact_id": "art_timeline_demo_0001",
+      "artifact_type": "timeline_json",
+      "mime_type": "application/json",
+      "size_bytes": 4096,
+      "checksum": "sha256:2c26b46b68ffc68ff99b453c1d30413413422d70",
+      "data_class": "internal",
+      "retention_policy": "project_30d",
+      "expires_at": "2026-06-06T00:00:00Z",
+      "access_policy": "tenant_scoped",
+      "evidence_ref": "qa/evidence/timeline/art_timeline_demo_0001"
+    }
+  ]
+}

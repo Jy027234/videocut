@@ -1,0 +1,1241 @@
+{
+  "$schema": "../schemas/toolkit-manifest.schema.json",
+  "toolkit_id": "video-editing-toolkit",
+  "display_name": "Video Editing Toolkit",
+  "category": "video_editing",
+  "version": "0.1.0-p0",
+  "status": "draft",
+  "runtime_adapter": {
+    "type": "local_worker",
+    "target": "agentctl-compatible-adapter",
+    "entrypoints": {
+      "prepare": "prepare(input, context)",
+      "run": "run(validated_input, context)",
+      "cancel": "cancel(run_id)",
+      "status": "status(run_id)",
+      "cleanup": "cleanup(run_id, retention_policy)"
+    }
+  },
+  "required_permissions": [
+    "artifact:read",
+    "artifact:write",
+    "trace:write"
+  ],
+  "required_scopes": [
+    "toolkit.video_editing.p0"
+  ],
+  "quota_metrics": [
+    "input_bytes",
+    "output_bytes",
+    "media_duration_seconds",
+    "frame_count",
+    "render_seconds",
+    "worker_cpu_seconds"
+  ],
+  "pricing_metrics": [
+    "media_duration_seconds",
+    "render_seconds",
+    "transcript_minutes"
+  ],
+  "sandbox_policy": {
+    "allow_raw_command": false,
+    "input_source": "artifact_ref_only",
+    "output_target": "artifact_ref_only",
+    "return_local_paths": false,
+    "network_access": "disabled_by_default"
+  },
+  "artifact_policy": {
+    "return_contract": "artifact_ref",
+    "storage_uri_visibility": "internal_only",
+    "default_retention_days": 7,
+    "preview_retention_days": 3,
+    "final_retention_days": 30,
+    "checksum_required": true,
+    "access_policy": "tenant_and_explicit_grants"
+  },
+  "approval_policy": {
+    "default": "none",
+    "requires_confirmation_for": [
+      "video.render.render_final",
+      "video.delivery.package_artifacts",
+      "video.delivery.create_delivery_manifest"
+    ],
+    "high_sensitivity_default": "disabled",
+    "approval_context_fields": [
+      "approval_id",
+      "approved_by",
+      "approved_at",
+      "purpose",
+      "retention_override"
+    ]
+  },
+  "data_sensitivity": {
+    "default": "medium",
+    "levels": [
+      "low",
+      "medium",
+      "high",
+      "restricted"
+    ],
+    "p0_enabled_levels": [
+      "low",
+      "medium"
+    ]
+  },
+  "input_schema": {
+    "$ref": "../schemas/capability-io.schema.json#/$defs/toolkit_run_input"
+  },
+  "output_schema": {
+    "$ref": "../schemas/capability-io.schema.json#/$defs/toolkit_run_output"
+  },
+  "capabilities": [
+    {
+      "capability": "video.asset_ingest.probe_media",
+      "version": "0.1.0-p0",
+      "status": "enabled",
+      "input_schema": {
+        "$ref": "../schemas/capability-io.schema.json#/$defs/media_artifact_input"
+      },
+      "output_schema": {
+        "$ref": "../schemas/capability-io.schema.json#/$defs/probe_media_output"
+      },
+      "data_sensitivity": "low",
+      "approval_policy": "none",
+      "artifact_policy": "metadata_only",
+      "error_codes": [
+        "MEDIA_UNREADABLE",
+        "UNSUPPORTED_MEDIA_FORMAT",
+        "ARTIFACT_ACCESS_DENIED"
+      ],
+      "required_permissions": [
+        "artifact:read",
+        "artifact:write",
+        "trace:write"
+      ],
+      "required_scopes": [
+        "toolkit.video_editing.p0"
+      ],
+      "quota_metrics": [
+        "input_bytes",
+        "output_bytes",
+        "media_duration_seconds",
+        "frame_count",
+        "render_seconds",
+        "worker_cpu_seconds"
+      ],
+      "pricing_metrics": [
+        "media_duration_seconds",
+        "render_seconds",
+        "transcript_minutes"
+      ],
+      "sandbox_policy": {
+        "allow_raw_command": false,
+        "input_source": "artifact_ref_only",
+        "output_target": "artifact_ref_only",
+        "return_local_paths": false,
+        "network_access": "disabled_by_default"
+      }
+    },
+    {
+      "capability": "video.asset_ingest.normalize_asset",
+      "version": "0.1.0-p0",
+      "status": "enabled",
+      "input_schema": {
+        "$ref": "../schemas/capability-io.schema.json#/$defs/media_artifact_input"
+      },
+      "output_schema": {
+        "$ref": "../schemas/capability-io.schema.json#/$defs/artifact_output"
+      },
+      "data_sensitivity": "low",
+      "approval_policy": "none",
+      "artifact_policy": "artifact_ref_required",
+      "error_codes": [
+        "NORMALIZE_FAILED",
+        "UNSUPPORTED_MEDIA_FORMAT",
+        "RESOURCE_LIMIT_EXCEEDED"
+      ],
+      "required_permissions": [
+        "artifact:read",
+        "artifact:write",
+        "trace:write"
+      ],
+      "required_scopes": [
+        "toolkit.video_editing.p0"
+      ],
+      "quota_metrics": [
+        "input_bytes",
+        "output_bytes",
+        "media_duration_seconds",
+        "frame_count",
+        "render_seconds",
+        "worker_cpu_seconds"
+      ],
+      "pricing_metrics": [
+        "media_duration_seconds",
+        "render_seconds",
+        "transcript_minutes"
+      ],
+      "sandbox_policy": {
+        "allow_raw_command": false,
+        "input_source": "artifact_ref_only",
+        "output_target": "artifact_ref_only",
+        "return_local_paths": false,
+        "network_access": "disabled_by_default"
+      }
+    },
+    {
+      "capability": "video.asset_ingest.extract_audio",
+      "version": "0.1.0-p0",
+      "status": "enabled",
+      "input_schema": {
+        "$ref": "../schemas/capability-io.schema.json#/$defs/media_artifact_input"
+      },
+      "output_schema": {
+        "$ref": "../schemas/capability-io.schema.json#/$defs/artifact_output"
+      },
+      "data_sensitivity": "low",
+      "approval_policy": "none",
+      "artifact_policy": "artifact_ref_required",
+      "error_codes": [
+        "EXTRACT_AUDIO_FAILED",
+        "NO_AUDIO_STREAM",
+        "RESOURCE_LIMIT_EXCEEDED"
+      ],
+      "required_permissions": [
+        "artifact:read",
+        "artifact:write",
+        "trace:write"
+      ],
+      "required_scopes": [
+        "toolkit.video_editing.p0"
+      ],
+      "quota_metrics": [
+        "input_bytes",
+        "output_bytes",
+        "media_duration_seconds",
+        "frame_count",
+        "render_seconds",
+        "worker_cpu_seconds"
+      ],
+      "pricing_metrics": [
+        "media_duration_seconds",
+        "render_seconds",
+        "transcript_minutes"
+      ],
+      "sandbox_policy": {
+        "allow_raw_command": false,
+        "input_source": "artifact_ref_only",
+        "output_target": "artifact_ref_only",
+        "return_local_paths": false,
+        "network_access": "disabled_by_default"
+      }
+    },
+    {
+      "capability": "video.asset_ingest.extract_frames",
+      "version": "0.1.0-p0",
+      "status": "enabled",
+      "input_schema": {
+        "$ref": "../schemas/capability-io.schema.json#/$defs/media_artifact_input"
+      },
+      "output_schema": {
+        "$ref": "../schemas/capability-io.schema.json#/$defs/artifact_output"
+      },
+      "data_sensitivity": "low",
+      "approval_policy": "none",
+      "artifact_policy": "artifact_ref_required",
+      "error_codes": [
+        "EXTRACT_FRAMES_FAILED",
+        "FRAME_RATE_UNSUPPORTED",
+        "RESOURCE_LIMIT_EXCEEDED"
+      ],
+      "required_permissions": [
+        "artifact:read",
+        "artifact:write",
+        "trace:write"
+      ],
+      "required_scopes": [
+        "toolkit.video_editing.p0"
+      ],
+      "quota_metrics": [
+        "input_bytes",
+        "output_bytes",
+        "media_duration_seconds",
+        "frame_count",
+        "render_seconds",
+        "worker_cpu_seconds"
+      ],
+      "pricing_metrics": [
+        "media_duration_seconds",
+        "render_seconds",
+        "transcript_minutes"
+      ],
+      "sandbox_policy": {
+        "allow_raw_command": false,
+        "input_source": "artifact_ref_only",
+        "output_target": "artifact_ref_only",
+        "return_local_paths": false,
+        "network_access": "disabled_by_default"
+      }
+    },
+    {
+      "capability": "video.asset_ingest.build_asset_index",
+      "version": "0.1.0-p0",
+      "status": "enabled",
+      "input_schema": {
+        "$ref": "../schemas/capability-io.schema.json#/$defs/artifact_collection_input"
+      },
+      "output_schema": {
+        "$ref": "../schemas/capability-io.schema.json#/$defs/artifact_output"
+      },
+      "data_sensitivity": "low",
+      "approval_policy": "none",
+      "artifact_policy": "artifact_ref_required",
+      "error_codes": [
+        "ASSET_INDEX_FAILED",
+        "ARTIFACT_NOT_FOUND",
+        "ARTIFACT_ACCESS_DENIED"
+      ],
+      "required_permissions": [
+        "artifact:read",
+        "artifact:write",
+        "trace:write"
+      ],
+      "required_scopes": [
+        "toolkit.video_editing.p0"
+      ],
+      "quota_metrics": [
+        "input_bytes",
+        "output_bytes",
+        "media_duration_seconds",
+        "frame_count",
+        "render_seconds",
+        "worker_cpu_seconds"
+      ],
+      "pricing_metrics": [
+        "media_duration_seconds",
+        "render_seconds",
+        "transcript_minutes"
+      ],
+      "sandbox_policy": {
+        "allow_raw_command": false,
+        "input_source": "artifact_ref_only",
+        "output_target": "artifact_ref_only",
+        "return_local_paths": false,
+        "network_access": "disabled_by_default"
+      }
+    },
+    {
+      "capability": "video.analysis.detect_scenes",
+      "version": "0.1.0-p0",
+      "status": "enabled",
+      "input_schema": {
+        "$ref": "../schemas/capability-io.schema.json#/$defs/media_artifact_input"
+      },
+      "output_schema": {
+        "$ref": "../schemas/capability-io.schema.json#/$defs/artifact_output"
+      },
+      "data_sensitivity": "low",
+      "approval_policy": "none",
+      "artifact_policy": "artifact_ref_required",
+      "error_codes": [
+        "SCENE_DETECTION_FAILED",
+        "MEDIA_UNREADABLE",
+        "RESOURCE_LIMIT_EXCEEDED"
+      ],
+      "required_permissions": [
+        "artifact:read",
+        "artifact:write",
+        "trace:write"
+      ],
+      "required_scopes": [
+        "toolkit.video_editing.p0"
+      ],
+      "quota_metrics": [
+        "input_bytes",
+        "output_bytes",
+        "media_duration_seconds",
+        "frame_count",
+        "render_seconds",
+        "worker_cpu_seconds"
+      ],
+      "pricing_metrics": [
+        "media_duration_seconds",
+        "render_seconds",
+        "transcript_minutes"
+      ],
+      "sandbox_policy": {
+        "allow_raw_command": false,
+        "input_source": "artifact_ref_only",
+        "output_target": "artifact_ref_only",
+        "return_local_paths": false,
+        "network_access": "disabled_by_default"
+      }
+    },
+    {
+      "capability": "video.analysis.analyze_frames",
+      "version": "0.1.0-p0",
+      "status": "enabled",
+      "input_schema": {
+        "$ref": "../schemas/capability-io.schema.json#/$defs/artifact_collection_input"
+      },
+      "output_schema": {
+        "$ref": "../schemas/capability-io.schema.json#/$defs/artifact_output"
+      },
+      "data_sensitivity": "low",
+      "approval_policy": "none",
+      "artifact_policy": "artifact_ref_required",
+      "error_codes": [
+        "FRAME_ANALYSIS_FAILED",
+        "ARTIFACT_NOT_FOUND",
+        "RESOURCE_LIMIT_EXCEEDED"
+      ],
+      "required_permissions": [
+        "artifact:read",
+        "artifact:write",
+        "trace:write"
+      ],
+      "required_scopes": [
+        "toolkit.video_editing.p0"
+      ],
+      "quota_metrics": [
+        "input_bytes",
+        "output_bytes",
+        "media_duration_seconds",
+        "frame_count",
+        "render_seconds",
+        "worker_cpu_seconds"
+      ],
+      "pricing_metrics": [
+        "media_duration_seconds",
+        "render_seconds",
+        "transcript_minutes"
+      ],
+      "sandbox_policy": {
+        "allow_raw_command": false,
+        "input_source": "artifact_ref_only",
+        "output_target": "artifact_ref_only",
+        "return_local_paths": false,
+        "network_access": "disabled_by_default"
+      }
+    },
+    {
+      "capability": "video.analysis.check_visual_quality",
+      "version": "0.1.0-p0",
+      "status": "enabled",
+      "input_schema": {
+        "$ref": "../schemas/capability-io.schema.json#/$defs/media_artifact_input"
+      },
+      "output_schema": {
+        "$ref": "../schemas/capability-io.schema.json#/$defs/artifact_output"
+      },
+      "data_sensitivity": "low",
+      "approval_policy": "none",
+      "artifact_policy": "artifact_ref_required",
+      "error_codes": [
+        "VISUAL_QUALITY_CHECK_FAILED",
+        "MEDIA_UNREADABLE",
+        "RESOURCE_LIMIT_EXCEEDED"
+      ],
+      "required_permissions": [
+        "artifact:read",
+        "artifact:write",
+        "trace:write"
+      ],
+      "required_scopes": [
+        "toolkit.video_editing.p0"
+      ],
+      "quota_metrics": [
+        "input_bytes",
+        "output_bytes",
+        "media_duration_seconds",
+        "frame_count",
+        "render_seconds",
+        "worker_cpu_seconds"
+      ],
+      "pricing_metrics": [
+        "media_duration_seconds",
+        "render_seconds",
+        "transcript_minutes"
+      ],
+      "sandbox_policy": {
+        "allow_raw_command": false,
+        "input_source": "artifact_ref_only",
+        "output_target": "artifact_ref_only",
+        "return_local_paths": false,
+        "network_access": "disabled_by_default"
+      }
+    },
+    {
+      "capability": "audio.speech.transcribe",
+      "version": "0.1.0-p0",
+      "status": "enabled",
+      "input_schema": {
+        "$ref": "../schemas/capability-io.schema.json#/$defs/media_artifact_input"
+      },
+      "output_schema": {
+        "$ref": "../schemas/capability-io.schema.json#/$defs/artifact_output"
+      },
+      "data_sensitivity": "medium",
+      "approval_policy": "none",
+      "artifact_policy": "artifact_ref_required",
+      "error_codes": [
+        "TRANSCRIPTION_FAILED",
+        "NO_AUDIO_STREAM",
+        "MODEL_UNAVAILABLE"
+      ],
+      "required_permissions": [
+        "artifact:read",
+        "artifact:write",
+        "trace:write"
+      ],
+      "required_scopes": [
+        "toolkit.video_editing.p0"
+      ],
+      "quota_metrics": [
+        "input_bytes",
+        "output_bytes",
+        "media_duration_seconds",
+        "frame_count",
+        "render_seconds",
+        "worker_cpu_seconds"
+      ],
+      "pricing_metrics": [
+        "media_duration_seconds",
+        "render_seconds",
+        "transcript_minutes"
+      ],
+      "sandbox_policy": {
+        "allow_raw_command": false,
+        "input_source": "artifact_ref_only",
+        "output_target": "artifact_ref_only",
+        "return_local_paths": false,
+        "network_access": "disabled_by_default"
+      }
+    },
+    {
+      "capability": "audio.speech.align_subtitles",
+      "version": "0.1.0-p0",
+      "status": "enabled",
+      "input_schema": {
+        "$ref": "../schemas/capability-io.schema.json#/$defs/artifact_collection_input"
+      },
+      "output_schema": {
+        "$ref": "../schemas/capability-io.schema.json#/$defs/artifact_output"
+      },
+      "data_sensitivity": "medium",
+      "approval_policy": "none",
+      "artifact_policy": "artifact_ref_required",
+      "error_codes": [
+        "SUBTITLE_ALIGNMENT_FAILED",
+        "TRANSCRIPT_INVALID",
+        "TIMECODE_OUT_OF_RANGE"
+      ],
+      "required_permissions": [
+        "artifact:read",
+        "artifact:write",
+        "trace:write"
+      ],
+      "required_scopes": [
+        "toolkit.video_editing.p0"
+      ],
+      "quota_metrics": [
+        "input_bytes",
+        "output_bytes",
+        "media_duration_seconds",
+        "frame_count",
+        "render_seconds",
+        "worker_cpu_seconds"
+      ],
+      "pricing_metrics": [
+        "media_duration_seconds",
+        "render_seconds",
+        "transcript_minutes"
+      ],
+      "sandbox_policy": {
+        "allow_raw_command": false,
+        "input_source": "artifact_ref_only",
+        "output_target": "artifact_ref_only",
+        "return_local_paths": false,
+        "network_access": "disabled_by_default"
+      }
+    },
+    {
+      "capability": "audio.speech.check_audio_quality",
+      "version": "0.1.0-p0",
+      "status": "enabled",
+      "input_schema": {
+        "$ref": "../schemas/capability-io.schema.json#/$defs/media_artifact_input"
+      },
+      "output_schema": {
+        "$ref": "../schemas/capability-io.schema.json#/$defs/artifact_output"
+      },
+      "data_sensitivity": "low",
+      "approval_policy": "none",
+      "artifact_policy": "artifact_ref_required",
+      "error_codes": [
+        "AUDIO_QUALITY_CHECK_FAILED",
+        "NO_AUDIO_STREAM",
+        "RESOURCE_LIMIT_EXCEEDED"
+      ],
+      "required_permissions": [
+        "artifact:read",
+        "artifact:write",
+        "trace:write"
+      ],
+      "required_scopes": [
+        "toolkit.video_editing.p0"
+      ],
+      "quota_metrics": [
+        "input_bytes",
+        "output_bytes",
+        "media_duration_seconds",
+        "frame_count",
+        "render_seconds",
+        "worker_cpu_seconds"
+      ],
+      "pricing_metrics": [
+        "media_duration_seconds",
+        "render_seconds",
+        "transcript_minutes"
+      ],
+      "sandbox_policy": {
+        "allow_raw_command": false,
+        "input_source": "artifact_ref_only",
+        "output_target": "artifact_ref_only",
+        "return_local_paths": false,
+        "network_access": "disabled_by_default"
+      }
+    },
+    {
+      "capability": "video.project_edit.create_project",
+      "version": "0.1.0-p0",
+      "status": "enabled",
+      "input_schema": {
+        "$ref": "../schemas/capability-io.schema.json#/$defs/artifact_collection_input"
+      },
+      "output_schema": {
+        "$ref": "../schemas/capability-io.schema.json#/$defs/project_output"
+      },
+      "data_sensitivity": "medium",
+      "approval_policy": "none",
+      "artifact_policy": "artifact_ref_required",
+      "error_codes": [
+        "PROJECT_CREATE_FAILED",
+        "ASSET_INDEX_INVALID",
+        "ARTIFACT_ACCESS_DENIED"
+      ],
+      "required_permissions": [
+        "artifact:read",
+        "artifact:write",
+        "trace:write"
+      ],
+      "required_scopes": [
+        "toolkit.video_editing.p0"
+      ],
+      "quota_metrics": [
+        "input_bytes",
+        "output_bytes",
+        "media_duration_seconds",
+        "frame_count",
+        "render_seconds",
+        "worker_cpu_seconds"
+      ],
+      "pricing_metrics": [
+        "media_duration_seconds",
+        "render_seconds",
+        "transcript_minutes"
+      ],
+      "sandbox_policy": {
+        "allow_raw_command": false,
+        "input_source": "artifact_ref_only",
+        "output_target": "artifact_ref_only",
+        "return_local_paths": false,
+        "network_access": "disabled_by_default"
+      }
+    },
+    {
+      "capability": "video.project_edit.inspect_assets",
+      "version": "0.1.0-p0",
+      "status": "enabled",
+      "input_schema": {
+        "$ref": "../schemas/capability-io.schema.json#/$defs/project_input"
+      },
+      "output_schema": {
+        "$ref": "../schemas/capability-io.schema.json#/$defs/artifact_output"
+      },
+      "data_sensitivity": "medium",
+      "approval_policy": "none",
+      "artifact_policy": "artifact_ref_required",
+      "error_codes": [
+        "PROJECT_NOT_FOUND",
+        "ASSET_INDEX_INVALID",
+        "ARTIFACT_ACCESS_DENIED"
+      ],
+      "required_permissions": [
+        "artifact:read",
+        "artifact:write",
+        "trace:write"
+      ],
+      "required_scopes": [
+        "toolkit.video_editing.p0"
+      ],
+      "quota_metrics": [
+        "input_bytes",
+        "output_bytes",
+        "media_duration_seconds",
+        "frame_count",
+        "render_seconds",
+        "worker_cpu_seconds"
+      ],
+      "pricing_metrics": [
+        "media_duration_seconds",
+        "render_seconds",
+        "transcript_minutes"
+      ],
+      "sandbox_policy": {
+        "allow_raw_command": false,
+        "input_source": "artifact_ref_only",
+        "output_target": "artifact_ref_only",
+        "return_local_paths": false,
+        "network_access": "disabled_by_default"
+      }
+    },
+    {
+      "capability": "video.project_edit.generate_edit_plan",
+      "version": "0.1.0-p0",
+      "status": "enabled",
+      "input_schema": {
+        "$ref": "../schemas/capability-io.schema.json#/$defs/project_input"
+      },
+      "output_schema": {
+        "$ref": "../schemas/capability-io.schema.json#/$defs/artifact_output"
+      },
+      "data_sensitivity": "medium",
+      "approval_policy": "none",
+      "artifact_policy": "artifact_ref_required",
+      "error_codes": [
+        "EDIT_PLAN_FAILED",
+        "PROJECT_NOT_FOUND",
+        "POLICY_VIOLATION"
+      ],
+      "required_permissions": [
+        "artifact:read",
+        "artifact:write",
+        "trace:write"
+      ],
+      "required_scopes": [
+        "toolkit.video_editing.p0"
+      ],
+      "quota_metrics": [
+        "input_bytes",
+        "output_bytes",
+        "media_duration_seconds",
+        "frame_count",
+        "render_seconds",
+        "worker_cpu_seconds"
+      ],
+      "pricing_metrics": [
+        "media_duration_seconds",
+        "render_seconds",
+        "transcript_minutes"
+      ],
+      "sandbox_policy": {
+        "allow_raw_command": false,
+        "input_source": "artifact_ref_only",
+        "output_target": "artifact_ref_only",
+        "return_local_paths": false,
+        "network_access": "disabled_by_default"
+      }
+    },
+    {
+      "capability": "video.project_edit.apply_timeline_patch",
+      "version": "0.1.0-p0",
+      "status": "enabled",
+      "input_schema": {
+        "$ref": "../schemas/capability-io.schema.json#/$defs/timeline_patch_input"
+      },
+      "output_schema": {
+        "$ref": "../schemas/capability-io.schema.json#/$defs/timeline_patch_output"
+      },
+      "data_sensitivity": "medium",
+      "approval_policy": "none",
+      "artifact_policy": "artifact_ref_required",
+      "error_codes": [
+        "TIMELINE_PATCH_INVALID",
+        "BASE_VERSION_MISMATCH",
+        "TIMECODE_OUT_OF_RANGE"
+      ],
+      "required_permissions": [
+        "artifact:read",
+        "artifact:write",
+        "trace:write"
+      ],
+      "required_scopes": [
+        "toolkit.video_editing.p0"
+      ],
+      "quota_metrics": [
+        "input_bytes",
+        "output_bytes",
+        "media_duration_seconds",
+        "frame_count",
+        "render_seconds",
+        "worker_cpu_seconds"
+      ],
+      "pricing_metrics": [
+        "media_duration_seconds",
+        "render_seconds",
+        "transcript_minutes"
+      ],
+      "sandbox_policy": {
+        "allow_raw_command": false,
+        "input_source": "artifact_ref_only",
+        "output_target": "artifact_ref_only",
+        "return_local_paths": false,
+        "network_access": "disabled_by_default"
+      }
+    },
+    {
+      "capability": "video.project_edit.render_preview",
+      "version": "0.1.0-p0",
+      "status": "enabled",
+      "input_schema": {
+        "$ref": "../schemas/capability-io.schema.json#/$defs/project_input"
+      },
+      "output_schema": {
+        "$ref": "../schemas/capability-io.schema.json#/$defs/artifact_output"
+      },
+      "data_sensitivity": "low",
+      "approval_policy": "none",
+      "artifact_policy": "preview_short_retention",
+      "error_codes": [
+        "PREVIEW_RENDER_FAILED",
+        "PROJECT_NOT_FOUND",
+        "RESOURCE_LIMIT_EXCEEDED"
+      ],
+      "required_permissions": [
+        "artifact:read",
+        "artifact:write",
+        "trace:write"
+      ],
+      "required_scopes": [
+        "toolkit.video_editing.p0"
+      ],
+      "quota_metrics": [
+        "input_bytes",
+        "output_bytes",
+        "media_duration_seconds",
+        "frame_count",
+        "render_seconds",
+        "worker_cpu_seconds"
+      ],
+      "pricing_metrics": [
+        "media_duration_seconds",
+        "render_seconds",
+        "transcript_minutes"
+      ],
+      "sandbox_policy": {
+        "allow_raw_command": false,
+        "input_source": "artifact_ref_only",
+        "output_target": "artifact_ref_only",
+        "return_local_paths": false,
+        "network_access": "disabled_by_default"
+      }
+    },
+    {
+      "capability": "video.project_edit.compare_versions",
+      "version": "0.1.0-p0",
+      "status": "enabled",
+      "input_schema": {
+        "$ref": "../schemas/capability-io.schema.json#/$defs/project_version_compare_input"
+      },
+      "output_schema": {
+        "$ref": "../schemas/capability-io.schema.json#/$defs/artifact_output"
+      },
+      "data_sensitivity": "medium",
+      "approval_policy": "none",
+      "artifact_policy": "artifact_ref_required",
+      "error_codes": [
+        "VERSION_COMPARE_FAILED",
+        "PROJECT_NOT_FOUND",
+        "VERSION_NOT_FOUND"
+      ],
+      "required_permissions": [
+        "artifact:read",
+        "artifact:write",
+        "trace:write"
+      ],
+      "required_scopes": [
+        "toolkit.video_editing.p0"
+      ],
+      "quota_metrics": [
+        "input_bytes",
+        "output_bytes",
+        "media_duration_seconds",
+        "frame_count",
+        "render_seconds",
+        "worker_cpu_seconds"
+      ],
+      "pricing_metrics": [
+        "media_duration_seconds",
+        "render_seconds",
+        "transcript_minutes"
+      ],
+      "sandbox_policy": {
+        "allow_raw_command": false,
+        "input_source": "artifact_ref_only",
+        "output_target": "artifact_ref_only",
+        "return_local_paths": false,
+        "network_access": "disabled_by_default"
+      }
+    },
+    {
+      "capability": "video.project_edit.rollback_version",
+      "version": "0.1.0-p0",
+      "status": "enabled",
+      "input_schema": {
+        "$ref": "../schemas/capability-io.schema.json#/$defs/project_input"
+      },
+      "output_schema": {
+        "$ref": "../schemas/capability-io.schema.json#/$defs/project_output"
+      },
+      "data_sensitivity": "medium",
+      "approval_policy": "none",
+      "artifact_policy": "artifact_ref_required",
+      "error_codes": [
+        "ROLLBACK_FAILED",
+        "PROJECT_NOT_FOUND",
+        "VERSION_NOT_FOUND"
+      ],
+      "required_permissions": [
+        "artifact:read",
+        "artifact:write",
+        "trace:write"
+      ],
+      "required_scopes": [
+        "toolkit.video_editing.p0"
+      ],
+      "quota_metrics": [
+        "input_bytes",
+        "output_bytes",
+        "media_duration_seconds",
+        "frame_count",
+        "render_seconds",
+        "worker_cpu_seconds"
+      ],
+      "pricing_metrics": [
+        "media_duration_seconds",
+        "render_seconds",
+        "transcript_minutes"
+      ],
+      "sandbox_policy": {
+        "allow_raw_command": false,
+        "input_source": "artifact_ref_only",
+        "output_target": "artifact_ref_only",
+        "return_local_paths": false,
+        "network_access": "disabled_by_default"
+      }
+    },
+    {
+      "capability": "video.render.render_preview",
+      "version": "0.1.0-p0",
+      "status": "enabled",
+      "input_schema": {
+        "$ref": "../schemas/capability-io.schema.json#/$defs/project_input"
+      },
+      "output_schema": {
+        "$ref": "../schemas/capability-io.schema.json#/$defs/artifact_output"
+      },
+      "data_sensitivity": "low",
+      "approval_policy": "none",
+      "artifact_policy": "preview_short_retention",
+      "error_codes": [
+        "PREVIEW_RENDER_FAILED",
+        "PROJECT_NOT_FOUND",
+        "RESOURCE_LIMIT_EXCEEDED"
+      ],
+      "required_permissions": [
+        "artifact:read",
+        "artifact:write",
+        "trace:write"
+      ],
+      "required_scopes": [
+        "toolkit.video_editing.p0"
+      ],
+      "quota_metrics": [
+        "input_bytes",
+        "output_bytes",
+        "media_duration_seconds",
+        "frame_count",
+        "render_seconds",
+        "worker_cpu_seconds"
+      ],
+      "pricing_metrics": [
+        "media_duration_seconds",
+        "render_seconds",
+        "transcript_minutes"
+      ],
+      "sandbox_policy": {
+        "allow_raw_command": false,
+        "input_source": "artifact_ref_only",
+        "output_target": "artifact_ref_only",
+        "return_local_paths": false,
+        "network_access": "disabled_by_default"
+      }
+    },
+    {
+      "capability": "video.render.render_final",
+      "version": "0.1.0-p0",
+      "status": "enabled",
+      "input_schema": {
+        "$ref": "../schemas/capability-io.schema.json#/$defs/project_input"
+      },
+      "output_schema": {
+        "$ref": "../schemas/capability-io.schema.json#/$defs/artifact_output"
+      },
+      "data_sensitivity": "medium",
+      "approval_policy": "confirm",
+      "artifact_policy": "final_retention",
+      "error_codes": [
+        "FINAL_RENDER_FAILED",
+        "APPROVAL_REQUIRED",
+        "RESOURCE_LIMIT_EXCEEDED"
+      ],
+      "required_permissions": [
+        "artifact:read",
+        "artifact:write",
+        "trace:write"
+      ],
+      "required_scopes": [
+        "toolkit.video_editing.p0"
+      ],
+      "quota_metrics": [
+        "input_bytes",
+        "output_bytes",
+        "media_duration_seconds",
+        "frame_count",
+        "render_seconds",
+        "worker_cpu_seconds"
+      ],
+      "pricing_metrics": [
+        "media_duration_seconds",
+        "render_seconds",
+        "transcript_minutes"
+      ],
+      "sandbox_policy": {
+        "allow_raw_command": false,
+        "input_source": "artifact_ref_only",
+        "output_target": "artifact_ref_only",
+        "return_local_paths": false,
+        "network_access": "disabled_by_default"
+      }
+    },
+    {
+      "capability": "video.delivery.generate_variants",
+      "version": "0.1.0-p0",
+      "status": "enabled",
+      "input_schema": {
+        "$ref": "../schemas/capability-io.schema.json#/$defs/artifact_collection_input"
+      },
+      "output_schema": {
+        "$ref": "../schemas/capability-io.schema.json#/$defs/artifact_output"
+      },
+      "data_sensitivity": "medium",
+      "approval_policy": "none",
+      "artifact_policy": "artifact_ref_required",
+      "error_codes": [
+        "VARIANT_GENERATION_FAILED",
+        "ARTIFACT_NOT_FOUND",
+        "RESOURCE_LIMIT_EXCEEDED"
+      ],
+      "required_permissions": [
+        "artifact:read",
+        "artifact:write",
+        "trace:write"
+      ],
+      "required_scopes": [
+        "toolkit.video_editing.p0"
+      ],
+      "quota_metrics": [
+        "input_bytes",
+        "output_bytes",
+        "media_duration_seconds",
+        "frame_count",
+        "render_seconds",
+        "worker_cpu_seconds"
+      ],
+      "pricing_metrics": [
+        "media_duration_seconds",
+        "render_seconds",
+        "transcript_minutes"
+      ],
+      "sandbox_policy": {
+        "allow_raw_command": false,
+        "input_source": "artifact_ref_only",
+        "output_target": "artifact_ref_only",
+        "return_local_paths": false,
+        "network_access": "disabled_by_default"
+      }
+    },
+    {
+      "capability": "video.delivery.package_artifacts",
+      "version": "0.1.0-p0",
+      "status": "enabled",
+      "input_schema": {
+        "$ref": "../schemas/capability-io.schema.json#/$defs/artifact_collection_input"
+      },
+      "output_schema": {
+        "$ref": "../schemas/capability-io.schema.json#/$defs/artifact_output"
+      },
+      "data_sensitivity": "medium",
+      "approval_policy": "confirm",
+      "artifact_policy": "final_retention",
+      "error_codes": [
+        "PACKAGE_FAILED",
+        "APPROVAL_REQUIRED",
+        "ARTIFACT_ACCESS_DENIED"
+      ],
+      "required_permissions": [
+        "artifact:read",
+        "artifact:write",
+        "trace:write"
+      ],
+      "required_scopes": [
+        "toolkit.video_editing.p0"
+      ],
+      "quota_metrics": [
+        "input_bytes",
+        "output_bytes",
+        "media_duration_seconds",
+        "frame_count",
+        "render_seconds",
+        "worker_cpu_seconds"
+      ],
+      "pricing_metrics": [
+        "media_duration_seconds",
+        "render_seconds",
+        "transcript_minutes"
+      ],
+      "sandbox_policy": {
+        "allow_raw_command": false,
+        "input_source": "artifact_ref_only",
+        "output_target": "artifact_ref_only",
+        "return_local_paths": false,
+        "network_access": "disabled_by_default"
+      }
+    },
+    {
+      "capability": "video.delivery.create_delivery_manifest",
+      "version": "0.1.0-p0",
+      "status": "enabled",
+      "input_schema": {
+        "$ref": "../schemas/capability-io.schema.json#/$defs/artifact_collection_input"
+      },
+      "output_schema": {
+        "$ref": "../schemas/capability-io.schema.json#/$defs/artifact_output"
+      },
+      "data_sensitivity": "medium",
+      "approval_policy": "confirm",
+      "artifact_policy": "final_retention",
+      "error_codes": [
+        "DELIVERY_MANIFEST_FAILED",
+        "APPROVAL_REQUIRED",
+        "ARTIFACT_ACCESS_DENIED"
+      ],
+      "required_permissions": [
+        "artifact:read",
+        "artifact:write",
+        "trace:write"
+      ],
+      "required_scopes": [
+        "toolkit.video_editing.p0"
+      ],
+      "quota_metrics": [
+        "input_bytes",
+        "output_bytes",
+        "media_duration_seconds",
+        "frame_count",
+        "render_seconds",
+        "worker_cpu_seconds"
+      ],
+      "pricing_metrics": [
+        "media_duration_seconds",
+        "render_seconds",
+        "transcript_minutes"
+      ],
+      "sandbox_policy": {
+        "allow_raw_command": false,
+        "input_source": "artifact_ref_only",
+        "output_target": "artifact_ref_only",
+        "return_local_paths": false,
+        "network_access": "disabled_by_default"
+      }
+    }
+  ],
+  "error_codes": [
+    {
+      "code": "VALIDATION_FAILED",
+      "message": "Input or output did not match the registered JSON schema.",
+      "retryable": false
+    },
+    {
+      "code": "ARTIFACT_NOT_FOUND",
+      "message": "Referenced artifact does not exist or is expired.",
+      "retryable": false
+    },
+    {
+      "code": "ARTIFACT_ACCESS_DENIED",
+      "message": "Caller is not allowed to access one or more artifact_refs.",
+      "retryable": false
+    },
+    {
+      "code": "APPROVAL_REQUIRED",
+      "message": "Capability requires approval_context or explicit confirmation.",
+      "retryable": false
+    },
+    {
+      "code": "RESOURCE_LIMIT_EXCEEDED",
+      "message": "Input size, duration, memory, CPU, or timeout limit was exceeded.",
+      "retryable": false
+    },
+    {
+      "code": "WORKER_UNAVAILABLE",
+      "message": "The selected worker adapter is unavailable.",
+      "retryable": true
+    },
+    {
+      "code": "WORKER_FAILED",
+      "message": "The worker adapter failed while executing the capability.",
+      "retryable": true
+    },
+    {
+      "code": "POLICY_VIOLATION",
+      "message": "The requested operation violates sandbox, data, or artifact policy.",
+      "retryable": false
+    },
+    {
+      "code": "UNAUTHORIZED",
+      "message": "Caller is not authorized to invoke the capability.",
+      "retryable": false
+    },
+    {
+      "code": "INVALID_SCHEMA",
+      "message": "Input or output did not match the registered JSON schema.",
+      "retryable": false
+    },
+    {
+      "code": "ARTIFACT_FORBIDDEN",
+      "message": "Caller is not allowed to access one or more artifact_refs.",
+      "retryable": false
+    },
+    {
+      "code": "QUOTA_EXCEEDED",
+      "message": "Quota or rate limit was exceeded.",
+      "retryable": false
+    },
+    {
+      "code": "TIMEOUT",
+      "message": "The toolkit run exceeded its timeout.",
+      "retryable": true
+    }
+  ]
+}

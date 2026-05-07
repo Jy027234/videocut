@@ -1,0 +1,367 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.local/video-editing-toolkit/toolkit-manifest.schema.json",
+  "title": "Video Editing Toolkit Manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "toolkit_id",
+    "display_name",
+    "category",
+    "version",
+    "capabilities",
+    "input_schema",
+    "output_schema",
+    "runtime_adapter",
+    "data_sensitivity",
+    "required_permissions",
+    "required_scopes",
+    "quota_metrics",
+    "pricing_metrics",
+    "approval_policy",
+    "sandbox_policy",
+    "artifact_policy",
+    "error_codes",
+    "status"
+  ],
+  "properties": {
+    "$schema": {
+      "type": "string"
+    },
+    "toolkit_id": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9-]{2,63}$"
+    },
+    "display_name": {
+      "type": "string",
+      "minLength": 1
+    },
+    "category": {
+      "type": "string",
+      "enum": [
+        "video_editing"
+      ]
+    },
+    "version": {
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+\\.\\d+(-[A-Za-z0-9.-]+)?$"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "draft",
+        "enabled",
+        "disabled",
+        "deprecated",
+        "frozen"
+      ]
+    },
+    "capabilities": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/capability"
+      }
+    },
+    "input_schema": {
+      "$ref": "#/$defs/schema_ref"
+    },
+    "output_schema": {
+      "$ref": "#/$defs/schema_ref"
+    },
+    "runtime_adapter": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": [
+        "type",
+        "target"
+      ],
+      "properties": {
+        "type": {
+          "type": "string"
+        },
+        "target": {
+          "type": "string"
+        }
+      }
+    },
+    "data_sensitivity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "default",
+        "levels",
+        "p0_enabled_levels"
+      ],
+      "properties": {
+        "default": {
+          "$ref": "#/$defs/data_sensitivity"
+        },
+        "levels": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/data_sensitivity"
+          },
+          "uniqueItems": true
+        },
+        "p0_enabled_levels": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/data_sensitivity"
+          },
+          "uniqueItems": true
+        }
+      }
+    },
+    "required_permissions": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "uniqueItems": true
+    },
+    "required_scopes": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "uniqueItems": true
+    },
+    "quota_metrics": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "uniqueItems": true
+    },
+    "pricing_metrics": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "uniqueItems": true
+    },
+    "approval_policy": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": [
+        "default",
+        "high_sensitivity_default"
+      ],
+      "properties": {
+        "default": {
+          "$ref": "#/$defs/approval_policy"
+        },
+        "high_sensitivity_default": {
+          "type": "string",
+          "enum": [
+            "disabled",
+            "approval_required"
+          ]
+        }
+      }
+    },
+    "sandbox_policy": {
+      "type": "object",
+      "additionalProperties": true
+    },
+    "artifact_policy": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": [
+        "return_contract",
+        "storage_uri_visibility",
+        "default_retention_days",
+        "checksum_required",
+        "access_policy"
+      ],
+      "properties": {
+        "return_contract": {
+          "type": "string",
+          "enum": [
+            "artifact_ref"
+          ]
+        },
+        "storage_uri_visibility": {
+          "type": "string",
+          "enum": [
+            "internal_only"
+          ]
+        },
+        "default_retention_days": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "checksum_required": {
+          "type": "boolean"
+        },
+        "access_policy": {
+          "type": "string"
+        }
+      }
+    },
+    "error_codes": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/error_code"
+      }
+    }
+  },
+  "$defs": {
+    "capability": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "capability",
+        "version",
+        "status",
+        "input_schema",
+        "output_schema",
+        "required_permissions",
+        "required_scopes",
+        "quota_metrics",
+        "pricing_metrics",
+        "data_sensitivity",
+        "approval_policy",
+        "sandbox_policy",
+        "artifact_policy",
+        "error_codes"
+      ],
+      "properties": {
+        "capability": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*){2,}$"
+        },
+        "version": {
+          "type": "string",
+          "pattern": "^\\d+\\.\\d+\\.\\d+(-[A-Za-z0-9.-]+)?$"
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "draft",
+            "enabled",
+            "disabled",
+            "deprecated"
+          ]
+        },
+        "input_schema": {
+          "$ref": "#/$defs/schema_ref"
+        },
+        "output_schema": {
+          "$ref": "#/$defs/schema_ref"
+        },
+        "required_permissions": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "uniqueItems": true
+        },
+        "required_scopes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "uniqueItems": true
+        },
+        "quota_metrics": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "uniqueItems": true
+        },
+        "pricing_metrics": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "uniqueItems": true
+        },
+        "data_sensitivity": {
+          "$ref": "#/$defs/data_sensitivity"
+        },
+        "approval_policy": {
+          "$ref": "#/$defs/approval_policy"
+        },
+        "sandbox_policy": {
+          "type": "object",
+          "additionalProperties": true
+        },
+        "artifact_policy": {
+          "type": "string",
+          "enum": [
+            "metadata_only",
+            "artifact_ref_required",
+            "preview_short_retention",
+            "final_retention"
+          ]
+        },
+        "error_codes": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Z][A-Z0-9_]+$"
+          },
+          "minItems": 1,
+          "uniqueItems": true
+        }
+      }
+    },
+    "schema_ref": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "$ref"
+      ],
+      "properties": {
+        "$ref": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "data_sensitivity": {
+      "type": "string",
+      "enum": [
+        "low",
+        "medium",
+        "high",
+        "restricted"
+      ]
+    },
+    "approval_policy": {
+      "type": "string",
+      "enum": [
+        "none",
+        "confirm",
+        "approval_required",
+        "disabled"
+      ]
+    },
+    "error_code": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "code",
+        "message",
+        "retryable"
+      ],
+      "properties": {
+        "code": {
+          "type": "string",
+          "pattern": "^[A-Z][A-Z0-9_]+$"
+        },
+        "message": {
+          "type": "string",
+          "minLength": 1
+        },
+        "retryable": {
+          "type": "boolean"
+        }
+      }
+    }
+  }
+}
