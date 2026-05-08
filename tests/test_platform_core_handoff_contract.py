@@ -12,6 +12,9 @@ from conftest import assert_no_public_path_or_command_leak
 from video_editing_toolkit.agentctl import run_agentctl
 from video_editing_toolkit.platform_core import (
     build_platform_core_completion,
+    build_platform_core_learning_audit_event,
+    build_platform_core_onboarding_bundle,
+    build_platform_core_release_dossier,
     build_platform_core_toolkit_descriptor,
     platform_core_envelope_to_agentctl,
 )
@@ -32,6 +35,161 @@ def test_platform_core_descriptor_is_manifest_backed_and_caller_safe() -> None:
         capability["capability"] for capability in descriptor["capabilities"]
     }
     assert_no_public_path_or_command_leak(descriptor)
+
+
+def test_platform_core_onboarding_bundle_is_review_only_and_p1_manifest_backed() -> None:
+    bundle = build_platform_core_onboarding_bundle(tenant_id="tenant_product_review")
+
+    assert bundle["schema"] == "video_editing_toolkit.platform_core.handoff.v0"
+    assert bundle["contract"] == "platform_core_toolkit_onboarding_bundle.v0"
+    assert bundle["status"] == "review_only"
+    assert bundle["tenant_id"] == "tenant_product_review"
+    assert bundle["release_center"]["publishable"] is False
+    assert bundle["release_center"]["enablement_requires_platform_core_change"] is True
+    assert bundle["learning_audit"]["ingest_mode"] == "metadata_only"
+    assert bundle["learning_audit"]["raw_media_ingestion"] is False
+    assert bundle["catalog_draft"]["credential_refs"] == []
+    assert bundle["catalog_draft"]["default_route_table"] == "p0_only"
+    assert bundle["catalog_draft"]["experimental_route_table"] == "explicit_resolver_only"
+
+    invokable = {
+        item["capability"] for item in bundle["catalog_draft"]["invokable_capabilities"]
+    }
+    review = {item["capability"] for item in bundle["catalog_draft"]["review_capabilities"]}
+    assert "video.project_edit.create_project" in invokable
+    assert "audio.tts.generate_voiceover" not in invokable
+    assert {
+        "audio.tts.generate_voiceover",
+        "video.qc.build_evidence_packet",
+        "video.render.export_project_format",
+    }.issubset(review)
+    assert bundle["capability_summary"]["p1_review_count"] >= 6
+    assert {
+        item["capability"] for item in bundle["deferred_high_sensitivity_capabilities"]
+    } == {
+        "audio.tts.clone_voice",
+        "audio.speech.diarize_speakers",
+        "video.analysis.recognize_faces",
+        "video.analysis.recognize_people",
+    }
+    assert_no_public_path_or_command_leak(bundle)
+
+
+def test_platform_core_learning_audit_event_is_metadata_only_and_caller_safe(tmp_path: Path) -> None:
+    private_path = str(tmp_path / "private" / "source.mov")
+    token = "artifact-secret-token"
+    payload = {
+        "request": {
+            "platform_run_id": "platform_run_audit",
+            "platform_tool_call_id": "platform_tool_call_audit",
+            "platform_trace_id": "trace_platform_audit",
+            "toolkit_id": "video-editing-toolkit",
+            "capability": "audio.speech.transcribe",
+            "input": {
+                "prompt": "Summarize private customer launch footage.",
+                "_worker_media_path": private_path,
+            },
+            "policy_context": {
+                "tenant_id": "tenant_audit",
+                "user_id": "user_audit",
+                "share_id": "share_audit",
+                "data_policy": {"retain_raw_input": False},
+                "quota_policy": {"profile": "review"},
+            },
+            "approval_context": {
+                "platform_approval_id": "approval_audit",
+                "provider_token": token,
+            },
+            "artifact_refs": [
+                {
+                    "artifact_id": "artifact_audit_source",
+                    "artifact_type": "source_video",
+                    "mime_type": "video/mp4",
+                    "size_bytes": 123,
+                    "checksum": "sha256:" + "a" * 64,
+                    "storage_uri": "s3://internal/private/source.mov",
+                    "download_url": f"/toolkit-artifacts/artifact_audit_source/bytes?sat={token}",
+                }
+            ],
+        },
+        "completion": {
+            "toolkit_id": "video-editing-toolkit",
+            "capability": "audio.speech.transcribe",
+            "processed": {
+                "run_id": "platform_run_audit",
+                "tool_call_id": "platform_tool_call_audit",
+                "trace_ref": "trace_platform_audit",
+                "status": "succeeded",
+                "output": {"text": "Private transcript text should never enter the audit event."},
+                "usage_metrics": {"duration_ms": 12},
+                "artifact_refs": [
+                    {
+                        "artifact_id": "artifact_transcript",
+                        "artifact_type": "transcript_json",
+                        "mime_type": "application/json",
+                        "size_bytes": 321,
+                        "checksum": "sha256:" + "b" * 64,
+                        "download_url": f"/toolkit-artifacts/artifact_transcript/bytes?sat={token}",
+                    }
+                ],
+            },
+        },
+    }
+
+    event = build_platform_core_learning_audit_event(payload)
+    rendered = json.dumps(event, sort_keys=True)
+
+    assert event["contract"] == "platform_core_learning_audit_event.v0"
+    assert event["event_type"] == "toolkit_run_metadata"
+    assert event["run_id"] == "platform_run_audit"
+    assert event["tool_call_id"] == "platform_tool_call_audit"
+    assert event["trace_ref"] == "trace_platform_audit"
+    assert event["usage_metrics"] == {"duration_ms": 12}
+    assert event["artifact_refs"] == [
+        {
+            "artifact_id": "artifact_transcript",
+            "artifact_type": "transcript_json",
+            "mime_type": "application/json",
+            "size_bytes": 321,
+            "checksum": "sha256:" + "b" * 64,
+        }
+    ]
+    assert event["policy_summary"]["tenant_id"] == "tenant_audit"
+    assert event["approval_summary"]["field_names"] == ["platform_approval_id"]
+    assert event["data_minimization"]["raw_input_logged"] is False
+    assert event["data_minimization"]["raw_output_logged"] is False
+    assert "Private transcript" not in rendered
+    assert "Summarize private" not in rendered
+    assert private_path not in rendered
+    assert token not in rendered
+    assert "download_url" not in rendered
+    assert "storage_uri" not in rendered
+    assert_no_public_path_or_command_leak(event)
+
+
+def test_platform_core_release_dossier_is_review_only_and_hash_bound() -> None:
+    dossier = build_platform_core_release_dossier(
+        git_revision="rev_test_release",
+        qa_report_refs=["qa/manifest-validation/0.1.0/rev_test_release.json"],
+    )
+
+    assert dossier["contract"] == "platform_core_release_dossier.v0"
+    assert dossier["status"] == "review_only"
+    assert dossier["publishable"] is False
+    assert dossier["git_revision"] == "rev_test_release"
+    assert dossier["source_manifest"]["path"] == "manifests/video-editing-toolkit.p1.manifest.json"
+    assert len(dossier["source_manifest"]["sha256"]) == 64
+    assert {item["path"] for item in dossier["schema_digests"]} == {
+        "schemas/toolkit-manifest.schema.json",
+        "schemas/capability-io.schema.json",
+        "schemas/artifact-manifests.schema.json",
+    }
+    assert dossier["capability_matrix"]["enabled_count"] >= 20
+    assert dossier["capability_matrix"]["p1_review_count"] >= 6
+    assert dossier["release_decision"]["decision"] == "no_go"
+    assert "publish_to_release_center" in dossier["blocked_actions"]
+    assert "modify_platform_core_repository" in dossier["blocked_actions"]
+    assert_no_public_path_or_command_leak(dossier)
 
 
 def test_platform_core_request_normalizes_to_agentctl_envelope_without_storage_internals(
@@ -127,4 +285,82 @@ def test_platform_core_cli_descriptor_outputs_json() -> None:
     payload = json.loads(completed.stdout)
     assert payload["contract"] == "platform_core_toolkit_descriptor.v0"
     assert payload["toolkit_id"] == "video-editing-toolkit"
+    assert_no_public_path_or_command_leak(payload)
+
+
+def test_platform_core_cli_onboarding_bundle_outputs_json() -> None:
+    completed = subprocess.run(
+        [sys.executable, "-m", "video_editing_toolkit.platform_core", "--onboarding-bundle"],
+        text=True,
+        capture_output=True,
+        check=False,
+        env={**os.environ, "PYTHONPATH": str(Path(__file__).resolve().parents[1] / "src")},
+    )
+
+    assert completed.returncode == 0
+    payload = json.loads(completed.stdout)
+    assert payload["contract"] == "platform_core_toolkit_onboarding_bundle.v0"
+    assert payload["release_center"]["publishable"] is False
+    assert_no_public_path_or_command_leak(payload)
+
+
+def test_platform_core_cli_audit_event_outputs_json() -> None:
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "video_editing_toolkit.platform_core",
+            "--audit-event-json",
+            json.dumps(
+                {
+                    "request": {
+                        "platform_run_id": "platform_run_cli_audit",
+                        "platform_tool_call_id": "tool_call_cli_audit",
+                        "toolkit_id": "video-editing-toolkit",
+                        "capability": "video.project_edit.create_project",
+                    },
+                    "completion": {
+                        "processed": {
+                            "status": "succeeded",
+                            "usage_metrics": {"duration_ms": 1},
+                        }
+                    },
+                }
+            ),
+        ],
+        text=True,
+        capture_output=True,
+        check=False,
+        env={**os.environ, "PYTHONPATH": str(Path(__file__).resolve().parents[1] / "src")},
+    )
+
+    assert completed.returncode == 0
+    payload = json.loads(completed.stdout)
+    assert payload["contract"] == "platform_core_learning_audit_event.v0"
+    assert payload["run_id"] == "platform_run_cli_audit"
+    assert payload["data_minimization"]["raw_input_logged"] is False
+    assert_no_public_path_or_command_leak(payload)
+
+
+def test_platform_core_cli_release_dossier_outputs_json() -> None:
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "video_editing_toolkit.platform_core",
+            "--release-dossier",
+            "--git-revision",
+            "rev_cli_release",
+        ],
+        text=True,
+        capture_output=True,
+        check=False,
+        env={**os.environ, "PYTHONPATH": str(Path(__file__).resolve().parents[1] / "src")},
+    )
+
+    assert completed.returncode == 0
+    payload = json.loads(completed.stdout)
+    assert payload["contract"] == "platform_core_release_dossier.v0"
+    assert payload["git_revision"] == "rev_cli_release"
+    assert payload["publishable"] is False
     assert_no_public_path_or_command_leak(payload)

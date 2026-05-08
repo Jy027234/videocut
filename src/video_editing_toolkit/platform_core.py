@@ -25,11 +25,9 @@ from urllib.request import Request, urlopen as default_urlopen
 
 TOOLKIT_ID = "video-editing-toolkit"
 SCHEMA = "video_editing_toolkit.platform_core.handoff.v0"
-DEFAULT_MANIFEST_PATH = (
-    Path(__file__).resolve().parents[2]
-    / "manifests"
-    / "video-editing-toolkit.p0.manifest.json"
-)
+REPO_ROOT = Path(__file__).resolve().parents[2]
+DEFAULT_MANIFEST_PATH = REPO_ROOT / "manifests" / "video-editing-toolkit.p0.manifest.json"
+DEFAULT_P1_MANIFEST_PATH = REPO_ROOT / "manifests" / "video-editing-toolkit.p1.manifest.json"
 DEFAULT_PLATFORM_CORE_BASE_URL = "http://127.0.0.1:8010"
 
 PUBLIC_ARTIFACT_KEYS = frozenset(
@@ -364,6 +362,284 @@ def build_platform_core_toolkit_descriptor(
     return _caller_safe(descriptor)
 
 
+def build_platform_core_onboarding_bundle(
+    manifest_path: str | Path = DEFAULT_P1_MANIFEST_PATH,
+    *,
+    tenant_id: str = "platform_review",
+) -> dict[str, Any]:
+    """Build a review-only Product Adapter onboarding bundle.
+
+    The bundle is metadata-only: it can be imported by a future release center
+    or learning/audit service, but it never publishes, enables, or executes P1
+    capabilities by itself.
+    """
+
+    manifest = _load_manifest(manifest_path)
+    capabilities = [
+        item
+        for item in manifest.get("capabilities", [])
+        if isinstance(item, Mapping) and isinstance(item.get("capability"), str)
+    ]
+    enabled = [item for item in capabilities if item.get("status") == "enabled"]
+    disabled = [item for item in capabilities if item.get("status") == "disabled"]
+    p1_review = [
+        item
+        for item in disabled
+        if "toolkit.video_editing.p1" in _string_list(item.get("required_scopes"))
+    ]
+    high_sensitivity_deferred = _deferred_high_sensitivity_capabilities(manifest)
+
+    bundle = {
+        "schema": SCHEMA,
+        "contract": "platform_core_toolkit_onboarding_bundle.v0",
+        "toolkit_id": manifest.get("toolkit_id", TOOLKIT_ID),
+        "display_name": manifest.get("display_name"),
+        "version": manifest.get("version"),
+        "status": "review_only",
+        "tenant_id": tenant_id,
+        "source_manifest": {
+            "version": manifest.get("version"),
+            "status": manifest.get("status"),
+            "category": manifest.get("category"),
+        },
+        "capability_summary": {
+            "total_count": len(capabilities),
+            "enabled_count": len(enabled),
+            "disabled_count": len(disabled),
+            "p1_review_count": len(p1_review),
+            "high_sensitivity_deferred_count": len(high_sensitivity_deferred),
+        },
+        "catalog_draft": {
+            "tool_id": manifest.get("toolkit_id", TOOLKIT_ID),
+            "tenant_id": tenant_id,
+            "invokable_capabilities": [_capability_listing(item) for item in enabled],
+            "review_capabilities": [_capability_listing(item) for item in p1_review],
+            "credential_refs": [],
+            "runtime_adapter": manifest.get("runtime_adapter", {}),
+            "execution_model": "external_video_toolkit_worker",
+            "artifact_contract": "artifact_ref_only",
+            "default_route_table": "p0_only",
+            "experimental_route_table": "explicit_resolver_only",
+        },
+        "release_center": {
+            "publishing_status": "draft_review_only",
+            "publishable": False,
+            "enablement_requires_platform_core_change": True,
+            "required_reviews": [
+                "toolkit_manifest_schema",
+                "authorization_policy",
+                "quota_and_billing_metrics",
+                "artifact_retention_policy",
+                "security_approval_policy",
+                "worker_resource_policy",
+            ],
+            "blocked_actions": [
+                "enable_disabled_capability",
+                "external_publish",
+                "run_heavy_media_inside_platform_core",
+                "bypass_agentctl_runtime_registry",
+            ],
+        },
+        "learning_audit": {
+            "ingest_mode": "metadata_only",
+            "raw_media_ingestion": False,
+            "raw_prompt_ingestion": False,
+            "caller_visible_trace": "redacted_summary_only",
+            "events": [
+                "toolkit_manifest_imported",
+                "capability_review_requested",
+                "capability_enablement_decision",
+                "artifact_policy_reviewed",
+                "quota_policy_reviewed",
+            ],
+        },
+        "handoff": {
+            "platform_core_contracts": [
+                "platform_core_toolkit_descriptor.v0",
+                "platform_core_toolkit_run_request.v0",
+                "platform_core_toolkit_run_completion.v0",
+            ],
+            "agentctl_contracts": [
+                "tool_catalog_register_draft",
+                "runspec_validate",
+                "runtime_worker_heartbeat",
+                "runtime_job_lease_execute_complete",
+            ],
+            "adapter_entrypoints": [
+                "prepare(input, context)",
+                "run(validated_input, context)",
+                "cancel(run_id)",
+                "status(run_id)",
+                "cleanup(run_id, retention_policy)",
+            ],
+        },
+        "deferred_high_sensitivity_capabilities": high_sensitivity_deferred,
+    }
+    return _caller_safe(bundle)
+
+
+def build_platform_core_learning_audit_event(
+    payload: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Build a metadata-only learning/audit event without raw inputs or outputs."""
+
+    request = _mapping_or_empty(payload.get("request"))
+    completion = _mapping_or_empty(payload.get("completion"))
+    if not completion:
+        completion = _mapping_or_empty(payload.get("local_result"))
+    if not completion:
+        completion = _mapping_or_empty(payload.get("result"))
+    if not completion:
+        completion = _mapping_or_empty(payload)
+
+    processed = _mapping_or_empty(completion.get("processed")) or _mapping_or_empty(completion.get("result"))
+    output_container = processed if processed else completion
+    artifact_refs = _audit_artifact_refs(
+        _public_artifact_refs(output_container.get("artifact_refs"))
+        or _public_artifact_refs(completion.get("artifact_refs"))
+        or _public_artifact_refs(request.get("artifact_refs"))
+    )
+    policy_context = _mapping_or_empty(request.get("policy_context")) or _mapping_or_empty(payload.get("policy_context"))
+    approval_context = _mapping_or_empty(request.get("approval_context")) or _mapping_or_empty(payload.get("approval_context"))
+
+    event = {
+        "schema": SCHEMA,
+        "contract": "platform_core_learning_audit_event.v0",
+        "event_type": "toolkit_run_metadata",
+        "toolkit_id": _string_choice(
+            completion.get("toolkit_id"),
+            request.get("toolkit_id"),
+            payload.get("toolkit_id"),
+            TOOLKIT_ID,
+        ),
+        "capability": _string_choice(
+            completion.get("capability"),
+            request.get("capability"),
+            payload.get("capability"),
+        ),
+        "run_id": _string_choice(
+            output_container.get("run_id"),
+            completion.get("run_id"),
+            request.get("run_id"),
+            request.get("platform_run_id"),
+        ),
+        "tool_call_id": _string_choice(
+            output_container.get("tool_call_id"),
+            completion.get("tool_call_id"),
+            request.get("tool_call_id"),
+            request.get("platform_tool_call_id"),
+        ),
+        "trace_ref": _string_choice(
+            output_container.get("trace_ref"),
+            completion.get("trace_ref"),
+            request.get("trace_ref"),
+            request.get("trace_id"),
+            request.get("platform_trace_id"),
+        ),
+        "status": _string_choice(
+            output_container.get("status"),
+            completion.get("status"),
+            "unknown",
+        ),
+        "error_code": _optional_string(output_container.get("error_code"))
+        or _optional_string(completion.get("error_code")),
+        "usage_metrics": _mapping_or_empty(output_container.get("usage_metrics"))
+        or _mapping_or_empty(completion.get("usage_metrics")),
+        "artifact_refs": artifact_refs,
+        "policy_summary": _policy_summary(policy_context, request),
+        "approval_summary": _approval_summary(approval_context),
+        "data_minimization": {
+            "raw_input_logged": False,
+            "raw_output_logged": False,
+            "raw_media_logged": False,
+            "artifact_locator_logged": False,
+            "storage_locator_logged": False,
+            "worker_locator_logged": False,
+        },
+    }
+    return _caller_safe(event)
+
+
+def build_platform_core_release_dossier(
+    manifest_path: str | Path = DEFAULT_P1_MANIFEST_PATH,
+    *,
+    git_revision: str | None = None,
+    qa_report_refs: Sequence[str] | None = None,
+) -> dict[str, Any]:
+    """Build a review-only release dossier for Platform Core publication."""
+
+    manifest_path = Path(manifest_path)
+    manifest = _load_manifest(manifest_path)
+    schema_paths = [
+        REPO_ROOT / "schemas" / "toolkit-manifest.schema.json",
+        REPO_ROOT / "schemas" / "capability-io.schema.json",
+        REPO_ROOT / "schemas" / "artifact-manifests.schema.json",
+    ]
+    capabilities = [
+        item
+        for item in manifest.get("capabilities", [])
+        if isinstance(item, Mapping) and isinstance(item.get("capability"), str)
+    ]
+    enabled = [item for item in capabilities if item.get("status") == "enabled"]
+    disabled = [item for item in capabilities if item.get("status") == "disabled"]
+    p1_review = [
+        item
+        for item in disabled
+        if "toolkit.video_editing.p1" in _string_list(item.get("required_scopes"))
+    ]
+    deferred = _deferred_high_sensitivity_capabilities(manifest)
+
+    dossier = {
+        "schema": SCHEMA,
+        "contract": "platform_core_release_dossier.v0",
+        "toolkit_id": manifest.get("toolkit_id", TOOLKIT_ID),
+        "version": manifest.get("version"),
+        "status": "review_only",
+        "publishable": False,
+        "git_revision": git_revision or "unknown",
+        "source_manifest": {
+            "path": _repo_relative_path(manifest_path),
+            "sha256": _file_sha256(manifest_path),
+            "version": manifest.get("version"),
+            "status": manifest.get("status"),
+        },
+        "schema_digests": [
+            {
+                "path": _repo_relative_path(path),
+                "sha256": _file_sha256(path),
+            }
+            for path in schema_paths
+        ],
+        "capability_matrix": {
+            "enabled": [_capability_listing(item) for item in enabled],
+            "p1_review_only": [_capability_listing(item) for item in p1_review],
+            "deferred_high_sensitivity": deferred,
+            "enabled_count": len(enabled),
+            "p1_review_count": len(p1_review),
+            "deferred_high_sensitivity_count": len(deferred),
+        },
+        "qa_report_refs": [ref for ref in qa_report_refs or [] if isinstance(ref, str) and ref],
+        "release_decision": {
+            "decision": "no_go",
+            "reason_code": "platform_core_release.review_only_contract",
+            "required_followups": [
+                "Platform Core rollout policy must enable capabilities tenant-by-tenant.",
+                "Learning/audit ingestion must remain metadata-only unless a separate data policy approves more.",
+                "Release Center publishing must be an explicit Platform Core action, not a toolkit CLI side effect.",
+                "P1 disabled capabilities must stay outside the default P0 runtime route table.",
+            ],
+        },
+        "blocked_actions": [
+            "publish_to_release_center",
+            "enable_p1_capabilities",
+            "modify_platform_core_repository",
+            "upload_external_media",
+            "execute_high_sensitivity_capability",
+        ],
+    }
+    return _caller_safe(dossier)
+
+
 def platform_core_envelope_to_agentctl(payload: Mapping[str, Any]) -> dict[str, Any]:
     """Normalize a future Platform Core run request into the local agentctl shape."""
 
@@ -465,6 +741,14 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     parser.add_argument("--manifest", default=str(DEFAULT_MANIFEST_PATH))
     parser.add_argument("--descriptor", action="store_true", help="Print the Platform Core toolkit descriptor.")
+    parser.add_argument("--onboarding-bundle", action="store_true", help="Print the review-only Product Adapter onboarding bundle.")
+    parser.add_argument("--onboarding-manifest", default=str(DEFAULT_P1_MANIFEST_PATH), help="Manifest used for --onboarding-bundle.")
+    parser.add_argument("--onboarding-tenant-id", default="platform_review", help="Tenant id to place in the onboarding bundle.")
+    parser.add_argument("--audit-event-json", help="JSON object used to build a metadata-only learning/audit event.")
+    parser.add_argument("--release-dossier", action="store_true", help="Print the review-only Platform Core release dossier.")
+    parser.add_argument("--release-manifest", default=str(DEFAULT_P1_MANIFEST_PATH), help="Manifest used for --release-dossier.")
+    parser.add_argument("--git-revision", help="Git revision to include in --release-dossier.")
+    parser.add_argument("--qa-report-ref", action="append", default=[], help="QA report artifact ref/name to include in --release-dossier.")
     parser.add_argument("--input-json", help="Platform Core run request to normalize. Defaults to stdin.")
     parser.add_argument("--completion-json", help="Local result JSON to normalize as a Platform Core completion.")
     parser.add_argument("--base-url", default=DEFAULT_PLATFORM_CORE_BASE_URL, help="Platform Core base URL.")
@@ -514,6 +798,19 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if args.command:
         payload = _run_platform_core_client_command(args)
+    elif args.audit_event_json:
+        payload = build_platform_core_learning_audit_event(_load_json_text(args.audit_event_json))
+    elif args.release_dossier:
+        payload = build_platform_core_release_dossier(
+            args.release_manifest,
+            git_revision=args.git_revision,
+            qa_report_refs=args.qa_report_ref,
+        )
+    elif args.onboarding_bundle:
+        payload = build_platform_core_onboarding_bundle(
+            args.onboarding_manifest,
+            tenant_id=args.onboarding_tenant_id,
+        )
     elif args.descriptor:
         payload = build_platform_core_toolkit_descriptor(args.manifest)
     elif args.completion_json:
@@ -636,6 +933,112 @@ def _public_artifact_refs(value: Any) -> list[dict[str, Any]]:
         refs.append(_caller_safe(ref))
         seen.add(artifact_id)
     return refs
+
+
+def _capability_listing(item: Mapping[str, Any]) -> dict[str, Any]:
+    return {
+        "capability": item.get("capability"),
+        "version": item.get("version"),
+        "status": item.get("status"),
+        "data_sensitivity": item.get("data_sensitivity"),
+        "approval_policy": item.get("approval_policy"),
+        "artifact_policy": item.get("artifact_policy"),
+        "required_scopes": _string_list(item.get("required_scopes")),
+        "quota_metrics": _string_list(item.get("quota_metrics")),
+        "pricing_metrics": _string_list(item.get("pricing_metrics")),
+        "input_schema": item.get("input_schema"),
+        "output_schema": item.get("output_schema"),
+    }
+
+
+def _audit_artifact_refs(refs: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
+    audit_refs: list[dict[str, Any]] = []
+    for ref in refs:
+        audit_ref = {
+            key: ref[key]
+            for key in (
+                "artifact_id",
+                "artifact_type",
+                "mime_type",
+                "size_bytes",
+                "checksum",
+                "data_class",
+                "retention_policy",
+                "expires_at",
+            )
+            if key in ref and ref[key] is not None
+        }
+        if audit_ref:
+            audit_refs.append(audit_ref)
+    return audit_refs
+
+
+def _policy_summary(policy_context: Mapping[str, Any], request: Mapping[str, Any]) -> dict[str, Any]:
+    data_policy = _mapping_or_empty(policy_context.get("data_policy")) or _mapping_or_empty(request.get("data_policy"))
+    quota_policy = _mapping_or_empty(policy_context.get("quota_policy")) or _mapping_or_empty(request.get("quota_policy"))
+    return {
+        "tenant_id": _string_choice(policy_context.get("tenant_id"), request.get("tenant_id")),
+        "user_id": _string_choice(policy_context.get("user_id"), request.get("user_id")),
+        "share_id": _optional_string(policy_context.get("share_id")) or _optional_string(request.get("share_id")),
+        "data_policy_fields": sorted(str(key) for key in data_policy),
+        "quota_policy_fields": sorted(str(key) for key in quota_policy),
+    }
+
+
+def _approval_summary(approval_context: Mapping[str, Any]) -> dict[str, Any]:
+    safe_fields = [
+        str(key)
+        for key in approval_context
+        if isinstance(key, str) and not _is_sensitive_field_name(key)
+    ]
+    return {
+        "provided": bool(approval_context),
+        "field_names": sorted(safe_fields),
+        "raw_values_logged": False,
+    }
+
+
+def _is_sensitive_field_name(value: str) -> bool:
+    normalized = value.casefold()
+    return any(part in normalized for part in ("token", "secret", "password", "api_key", "private_key", "authorization"))
+
+
+def _deferred_high_sensitivity_capabilities(manifest: Mapping[str, Any]) -> list[dict[str, Any]]:
+    approval_policy = manifest.get("approval_policy")
+    if not isinstance(approval_policy, Mapping):
+        return []
+    deferred = approval_policy.get("deferred_high_sensitivity_capabilities")
+    if not isinstance(deferred, list):
+        return []
+    result: list[dict[str, Any]] = []
+    for item in deferred:
+        if not isinstance(item, Mapping) or not isinstance(item.get("capability"), str):
+            continue
+        result.append(
+            {
+                "capability": item.get("capability"),
+                "status": item.get("status", "deferred"),
+                "requires": _string_list(item.get("requires")),
+            }
+        )
+    return result
+
+
+def _string_list(value: Any) -> list[str]:
+    if not isinstance(value, Sequence) or isinstance(value, (str, bytes, bytearray)):
+        return []
+    return [item for item in value if isinstance(item, str) and item]
+
+
+def _file_sha256(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _repo_relative_path(path: Path) -> str:
+    try:
+        return path.resolve().relative_to(REPO_ROOT.resolve()).as_posix()
+    except ValueError:
+        return path.name
 
 
 def _load_manifest(path: str | Path) -> dict[str, Any]:

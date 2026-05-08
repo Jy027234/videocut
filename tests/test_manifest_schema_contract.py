@@ -15,7 +15,12 @@ from conftest import (
     load_json,
     require_json_files,
 )
-from video_editing_toolkit.adapters import CAPABILITY_ROUTES
+from video_editing_toolkit.adapters import (
+    CAPABILITY_ROUTES,
+    P1_CAPABILITY_ROUTES,
+    resolve_p1_experimental_route,
+    resolve_route,
+)
 from video_editing_toolkit.agentctl import NO_UPLOAD_CAPABILITIES
 from video_editing_toolkit.runtime import adapter_run_handler, register_p0_adapter_handlers
 
@@ -188,6 +193,30 @@ def test_p1_manifest_extends_p0_without_default_enabling_p1_or_sensitive_capabil
     assert {entry["capability"] for entry in deferred} == DEFERRED_HIGH_SENSITIVITY_CAPABILITIES
     assert {entry["status"] for entry in deferred} == {"deferred"}
     assert all("approval" in entry["requires"] and "consent" in entry["requires"] for entry in deferred)
+
+
+def test_all_p1_scoped_capabilities_are_disabled_and_not_p0_routed() -> None:
+    p1_manifest = load_json(P1_MANIFEST_PATH)
+    p1_scoped_entries = [
+        capability
+        for capability in p1_manifest["capabilities"]
+        if "toolkit.video_editing.p1" in capability.get("required_scopes", [])
+    ]
+
+    assert p1_scoped_entries, "P1 manifest should contain review-only P1 scoped capabilities"
+    for entry in p1_scoped_entries:
+        capability = entry["capability"]
+        assert entry["status"] == "disabled", capability
+        assert capability not in CAPABILITY_ROUTES
+        assert capability in P1_CAPABILITY_ROUTES
+        assert resolve_p1_experimental_route(capability).capability == capability
+        sandbox_policy = entry["sandbox_policy"]
+        assert sandbox_policy["input_source"] == "artifact_ref_only"
+        assert sandbox_policy["output_target"] == "artifact_ref_only"
+        assert sandbox_policy["return_local_paths"] is False
+        assert sandbox_policy["network_access"] == "disabled_by_default"
+        with pytest.raises(ValueError):
+            resolve_route(capability)
 
 
 def test_enabled_manifest_capabilities_match_runtime_and_local_entrypoints() -> None:

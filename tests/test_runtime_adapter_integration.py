@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import shutil
 import struct
 import wave
@@ -10,7 +11,8 @@ from typing import Any
 
 import pytest
 
-from video_editing_toolkit.adapters import CAPABILITY_ROUTES
+from video_editing_toolkit.adapters import CAPABILITY_ROUTES, P1_CAPABILITY_ROUTES
+from video_editing_toolkit.agentctl import run_agentctl
 from video_editing_toolkit.runtime import (
     LocalRunService,
     RunRequest,
@@ -51,6 +53,48 @@ def test_every_enabled_manifest_capability_has_a_p0_route() -> None:
     }
 
     assert enabled_capabilities == set(CAPABILITY_ROUTES)
+
+
+def test_agentctl_rejects_p1_experimental_capabilities_by_default(tmp_path: Path) -> None:
+    token = "artifact-secret-token"
+
+    for capability in P1_CAPABILITY_ROUTES:
+        artifact_root = tmp_path / capability.replace(".", "_")
+        response = run_agentctl(
+            {
+                "toolkit_id": "video-editing-toolkit",
+                "capability": capability,
+                "input": {"project_id": "proj_p1_reject"},
+                "artifact_refs": [
+                    {
+                        "artifact_id": f"artifact_{capability.replace('.', '_')}",
+                        "artifact_type": "source_video",
+                        "mime_type": "video/mp4",
+                        "size_bytes": 123,
+                        "checksum": "sha256:" + "a" * 64,
+                        "download_url": f"/toolkit-artifacts/source/bytes?sat={token}",
+                        "storage_uri": "s3://internal/private/source.mov",
+                    }
+                ],
+                "policy_context": {
+                    "tenant_id": "tenant_p1_reject",
+                    "user_id": "user_p1_reject",
+                },
+            },
+            artifact_root=artifact_root,
+        )
+        rendered = json.dumps(response, sort_keys=True)
+
+        assert response["ok"] is False, capability
+        assert response["processed"]["status"] == "failed", capability
+        assert response["processed"]["error_code"] == "handler_not_registered", capability
+        assert response["processed"]["artifact_refs"] == [], capability
+        assert response["processed"]["usage_summary"]["artifact_counts"]["output"] == 0
+        assert not any(artifact_root.iterdir()), capability
+        assert token not in rendered
+        assert "download_url" not in rendered
+        assert "storage_uri" not in rendered
+        assert_no_public_path_or_command_leak(response)
 
 
 def test_local_runtime_processes_registered_project_edit_adapter(tmp_path) -> None:
