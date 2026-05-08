@@ -254,6 +254,33 @@ Worker completions may include caller-safe `artifact_lifecycle_summary`
 metadata. The summary records input materialization counts and artifact ids only;
 it never includes local paths, storage locators, signed URLs, or worker internals.
 
+## Explicit Local Loop Runner
+
+Contract names:
+
+- `platform_core_local_loop_runner_preview.v0`
+- `platform_core_local_loop_runner.v0`
+
+Purpose: provide a single operator-controlled command for local end-to-end
+verification. The preview contract is the default and has no network mutation.
+The runner contract appears only when the caller explicitly opts in to
+execution.
+
+The explicit runner sequence is:
+
+```text
+manifest registration dry-run
+agentctl /runspecs/run enqueue
+external worker heartbeat and lease
+local worker execution
+agentctl completion
+Platform Core completion normalization
+learning/audit metadata preview
+```
+
+The control-plane URL and artifact-byte URL are separate. This keeps agentctl as
+the queue/runtime boundary and Platform Core as the artifact/authz boundary.
+
 ## Implemented Commands
 
 The local CLI emits JSON only and does not call Platform Core:
@@ -264,11 +291,15 @@ video-toolkit-platform-core --audit-event-json '<json request/completion payload
 video-toolkit-platform-core --release-dossier --git-revision <revision>
 video-toolkit-platform-core --manifest-registration-dry-run
 video-toolkit-platform-core --local-loop-package
+video-toolkit-platform-core-loop
 ```
 
 These commands are intended for future Product Adapter, learning/audit, and
 Release Center ingestion. Real ingestion and publication remain Platform
 Core-side actions.
+
+The local loop runner only performs enqueue/lease/complete when the operator
+passes `--execute-local-loop`.
 
 ## Review Checklist
 

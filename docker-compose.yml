@@ -7,11 +7,77 @@ services:
     volumes:
       - .:/workspace
       - video-toolkit-data:/workspace/.video-toolkit-data
+      - artifact-cache:/workspace/.video-toolkit-data/artifact-cache
     environment:
       VIDEO_TOOLKIT_DATA_DIR: /workspace/.video-toolkit-data
+      VIDEO_TOOLKIT_ARTIFACT_CACHE_DIR: /workspace/.video-toolkit-data/artifact-cache
+      VIDEO_TOOLKIT_WORKER_PROFILE: cpu_light
+      VIDEO_TOOLKIT_ALLOWED_RESOURCE_CLASSES: cpu_light
+      VIDEO_TOOLKIT_MAX_JOB_INPUT_BYTES: "536870912"
+      VIDEO_TOOLKIT_MAX_RUN_TIMEOUT_SECONDS: "120"
+      VIDEO_TOOLKIT_MAX_ARTIFACT_BYTES: "536870912"
+      VIDEO_TOOLKIT_MAX_ATTEMPTS: "1"
     command: pytest
 
-  # Optional profile boundary for future heavier analysis workers.
+  cpu_light:
+    profiles:
+      - cpu_light
+    build:
+      context: .
+      target: toolkit
+    image: video-editing-toolkit:cpu-light
+    working_dir: /workspace
+    volumes:
+      - .:/workspace
+      - video-toolkit-data:/workspace/.video-toolkit-data
+      - artifact-cache:/workspace/.video-toolkit-data/artifact-cache
+    environment:
+      VIDEO_TOOLKIT_DATA_DIR: /workspace/.video-toolkit-data
+      VIDEO_TOOLKIT_ARTIFACT_CACHE_DIR: /workspace/.video-toolkit-data/artifact-cache
+      VIDEO_TOOLKIT_WORKER_PROFILE: cpu_light
+      VIDEO_TOOLKIT_ALLOWED_RESOURCE_CLASSES: cpu_light
+      VIDEO_TOOLKIT_MAX_JOB_INPUT_BYTES: "536870912"
+      VIDEO_TOOLKIT_MAX_RUN_TIMEOUT_SECONDS: "120"
+      VIDEO_TOOLKIT_MAX_ARTIFACT_BYTES: "536870912"
+      VIDEO_TOOLKIT_MAX_ATTEMPTS: "1"
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 1g
+    command:
+      - video-toolkit-agentctl-worker
+
+  cpu_heavy:
+    profiles:
+      - cpu_heavy
+    build:
+      context: .
+      target: toolkit
+    image: video-editing-toolkit:cpu-heavy
+    working_dir: /workspace
+    volumes:
+      - .:/workspace
+      - video-toolkit-data:/workspace/.video-toolkit-data
+      - artifact-cache:/workspace/.video-toolkit-data/artifact-cache
+    environment:
+      VIDEO_TOOLKIT_DATA_DIR: /workspace/.video-toolkit-data
+      VIDEO_TOOLKIT_ARTIFACT_CACHE_DIR: /workspace/.video-toolkit-data/artifact-cache
+      VIDEO_TOOLKIT_WORKER_PROFILE: cpu_heavy
+      VIDEO_TOOLKIT_ALLOWED_RESOURCE_CLASSES: cpu_heavy
+      VIDEO_TOOLKIT_MAX_JOB_INPUT_BYTES: "4294967296"
+      VIDEO_TOOLKIT_MAX_RUN_TIMEOUT_SECONDS: "900"
+      VIDEO_TOOLKIT_MAX_ARTIFACT_BYTES: "4294967296"
+      VIDEO_TOOLKIT_MAX_ATTEMPTS: "1"
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 4g
+    command:
+      - video-toolkit-agentctl-worker
+
+  # Optional profile boundary for heavier analysis workers.
   # Keep PySceneDetect, OpenCV, Whisper, model downloads, and GPU/runtime-specific
   # dependencies out of the default toolkit image until their contracts settle.
   analysis:
@@ -25,9 +91,21 @@ services:
     volumes:
       - .:/workspace
       - video-toolkit-data:/workspace/.video-toolkit-data
+      - artifact-cache:/workspace/.video-toolkit-data/artifact-cache
     environment:
       VIDEO_TOOLKIT_DATA_DIR: /workspace/.video-toolkit-data
+      VIDEO_TOOLKIT_ARTIFACT_CACHE_DIR: /workspace/.video-toolkit-data/artifact-cache
       VIDEO_TOOLKIT_WORKER_PROFILE: analysis
+      VIDEO_TOOLKIT_ALLOWED_RESOURCE_CLASSES: cpu_heavy
+      VIDEO_TOOLKIT_MAX_JOB_INPUT_BYTES: "4294967296"
+      VIDEO_TOOLKIT_MAX_RUN_TIMEOUT_SECONDS: "900"
+      VIDEO_TOOLKIT_MAX_ARTIFACT_BYTES: "4294967296"
+      VIDEO_TOOLKIT_MAX_ATTEMPTS: "1"
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 4g
     command:
       - python
       - -c
@@ -47,19 +125,64 @@ services:
     volumes:
       - .:/workspace
       - video-toolkit-data:/workspace/.video-toolkit-data
+      - artifact-cache:/workspace/.video-toolkit-data/artifact-cache
       - whisper-cache:/workspace/.video-toolkit-data/whisper-cache
     environment:
       VIDEO_TOOLKIT_DATA_DIR: /workspace/.video-toolkit-data
+      VIDEO_TOOLKIT_ARTIFACT_CACHE_DIR: /workspace/.video-toolkit-data/artifact-cache
       VIDEO_TOOLKIT_WORKER_PROFILE: speech
+      VIDEO_TOOLKIT_ALLOWED_RESOURCE_CLASSES: gpu_optional
+      VIDEO_TOOLKIT_MAX_JOB_INPUT_BYTES: "2147483648"
+      VIDEO_TOOLKIT_MAX_RUN_TIMEOUT_SECONDS: "1800"
+      VIDEO_TOOLKIT_MAX_ARTIFACT_BYTES: "536870912"
+      VIDEO_TOOLKIT_MAX_ATTEMPTS: "1"
+      VET_ALLOW_WHISPER: "0"
+      VET_ALLOW_WHISPER_DOWNLOAD: "0"
       WHISPER_CACHE_DIR: /workspace/.video-toolkit-data/whisper-cache
       VET_WHISPER_MODEL_DIR: /workspace/.video-toolkit-data/whisper-cache
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 8g
     command:
       - python
       - -c
       - import os; print('speech profile ready; install Whisper/Torch explicitly when needed; cache:', os.environ.get('WHISPER_CACHE_DIR'))
 
+  render:
+    profiles:
+      - render
+    build:
+      context: .
+      target: toolkit
+    image: video-editing-toolkit:render
+    working_dir: /workspace
+    volumes:
+      - .:/workspace
+      - video-toolkit-data:/workspace/.video-toolkit-data
+      - artifact-cache:/workspace/.video-toolkit-data/artifact-cache
+    environment:
+      VIDEO_TOOLKIT_DATA_DIR: /workspace/.video-toolkit-data
+      VIDEO_TOOLKIT_ARTIFACT_CACHE_DIR: /workspace/.video-toolkit-data/artifact-cache
+      VIDEO_TOOLKIT_WORKER_PROFILE: render
+      VIDEO_TOOLKIT_ALLOWED_RESOURCE_CLASSES: cpu_heavy
+      VIDEO_TOOLKIT_MAX_JOB_INPUT_BYTES: "4294967296"
+      VIDEO_TOOLKIT_MAX_RUN_TIMEOUT_SECONDS: "900"
+      VIDEO_TOOLKIT_MAX_ARTIFACT_BYTES: "4294967296"
+      VIDEO_TOOLKIT_MAX_ATTEMPTS: "1"
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 4g
+    command:
+      - video-toolkit-agentctl-worker
+
 volumes:
   video-toolkit-data:
     name: video-toolkit-data
+  artifact-cache:
+    name: video-toolkit-artifact-cache
   whisper-cache:
     name: video-toolkit-whisper-cache

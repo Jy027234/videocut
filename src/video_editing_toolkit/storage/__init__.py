@@ -1,4 +1,10 @@
-from video_editing_toolkit.storage.artifacts import ArtifactRef, LocalArtifactStore, validate_artifact_id
+from video_editing_toolkit.storage.artifacts import (
+    ArtifactCleanupSummary,
+    ArtifactMetadataSummary,
+    ArtifactRef,
+    LocalArtifactStore,
+    validate_artifact_id,
+)
 from video_editing_toolkit.storage.materialize import (
     ArtifactMaterializationConfig,
     ArtifactMaterializationError,
@@ -23,6 +29,8 @@ __all__ = [
     "ArtifactMaterializationConfig",
     "ArtifactMaterializationError",
     "ArtifactMaterializationSummary",
+    "ArtifactCleanupSummary",
+    "ArtifactMetadataSummary",
     "ArtifactRef",
     "LocalResumableUploadStore",
     "LocalArtifactStore",

@@ -222,17 +222,28 @@ py -m video_editing_toolkit.platform_core --input-json $request
 P0.15 is still interface reservation only: it does not call a live Platform
 Core service, upload bytes, or bypass Platform Core authorization.
 
-Generate P1.7 no-mutation Platform Core rehearsal payloads:
+Generate P1.7/P1.8 Platform Core rehearsal payloads and the P1.8 explicit
+local loop runner preview:
 
 ```powershell
 py -m video_editing_toolkit.platform_core --manifest-registration-dry-run
 py -m video_editing_toolkit.platform_core --local-loop-package
+py -m video_editing_toolkit.platform_core_loop
 ```
 
 These payloads preserve P1 disabled capability status and preview the future
 Platform Core + agentctl + external worker loop without registering tools,
 enqueueing jobs, downloading artifacts, publishing releases, or modifying the
 Platform Core repository.
+
+Only the explicit runner opt-in performs local enqueue/lease/complete calls:
+
+```powershell
+py -m video_editing_toolkit.platform_core_loop `
+  --base-url http://127.0.0.1:8765 `
+  --artifact-base-url http://127.0.0.1:8010 `
+  --execute-local-loop
+```
 
 ## Docker Worker
 
@@ -257,4 +268,4 @@ docker compose run --rm toolkit video-toolkit-demo
 ```
 
 The host machine may not have `ffmpeg`, `ffprobe`, PySceneDetect, OpenCV, or Whisper dependencies; Docker is the intended P0.4 media worker environment.
-See `docs/docker.md` for the default worker plus dedicated `analysis` and `speech` profile boundaries.
+See `docs/docker.md` for the default worker plus dedicated `cpu_light`, `cpu_heavy`, `analysis`, `speech`, and `render` profile boundaries.

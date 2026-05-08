@@ -151,7 +151,7 @@ def test_p0_and_p1_manifests_validate_against_toolkit_manifest_schema() -> None:
     validator.validate(p0_manifest)
     validator.validate(p1_manifest)
     assert p0_manifest["version"].endswith("-p0")
-    assert p1_manifest["version"].endswith("-p1.7")
+    assert p1_manifest["version"].endswith("-p1.8")
 
 
 def test_p1_manifest_extends_p0_without_default_enabling_p1_or_sensitive_capabilities() -> None:
@@ -184,6 +184,19 @@ def test_p1_manifest_extends_p0_without_default_enabling_p1_or_sensitive_capabil
         "platform_core_repository_mutation": False,
         "enable_p1_disabled_capabilities": False,
         "product_side_rollout_required": True,
+    }
+    assert p1_manifest["sandbox_policy"]["p1_8_operational_hardening"] == {
+        "local_loop_runner": "explicit_opt_in_only",
+        "worker_deployment_profiles": [
+            "cpu_light",
+            "cpu_heavy",
+            "analysis",
+            "speech",
+            "render",
+        ],
+        "artifact_lifecycle_cleanup": "local_store_caller_safe",
+        "platform_core_repository_mutation": False,
+        "network_execution_default": False,
     }
     assert (
         p1_entries["video.qc.build_evidence_packet"]["sandbox_policy"]["p1_3_runtime_mode"]

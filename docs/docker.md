@@ -59,17 +59,51 @@ docker compose run --rm toolkit video-toolkit-demo
 - `ffmpeg` and `ffprobe`
 - mounted project workspace at `/workspace`
 - mounted artifact/data volume at `/workspace/.video-toolkit-data`
+- `VIDEO_TOOLKIT_ALLOWED_RESOURCE_CLASSES=cpu_light`
+- 512 MiB job/artifact guards and a 120 second run-time guard
 
 Do not add PySceneDetect, OpenCV, Whisper, model weights, GPU runtimes, or other
 large media-analysis dependencies to the default image unless the default worker
 contract explicitly changes.
+
+All worker profiles mount the shared artifact cache volume at
+`/workspace/.video-toolkit-data/artifact-cache` and expose it as
+`VIDEO_TOOLKIT_ARTIFACT_CACHE_DIR`. The cache is a worker-local deployment
+concern; callers and Platform Core should continue to exchange artifact refs
+instead of cache paths.
+
+### CPU profiles
+
+`cpu_light` is the explicit default-class worker profile. It uses the same
+lightweight `toolkit` Dockerfile target, accepts only `cpu_light` work, and
+keeps the same 512 MiB input/artifact and 120 second run guards as the default
+`toolkit` service.
+
+```powershell
+docker compose --profile cpu_light build cpu_light
+docker compose --profile cpu_light run --rm cpu_light
+```
+
+`cpu_heavy` is the opt-in CPU profile for larger local media operations. It
+still uses the lightweight toolkit image, but its worker guards accept only
+`cpu_heavy` routes with 4 GiB input/artifact limits and a 900 second run-time
+guard. Use it for CPU-heavy execution-pool experiments instead of widening the
+default `toolkit` or Platform Core process.
+
+```powershell
+docker compose --profile cpu_heavy build cpu_heavy
+docker compose --profile cpu_heavy run --rm cpu_heavy
+```
+
+### Analysis profile
 
 `analysis` is an opt-in Compose profile with a dedicated image built from the
 `analysis` Dockerfile target. It inherits the default toolkit image, then
 installs the `analysis` optional dependency group with OpenCV headless support.
 The target then installs PySceneDetect without dependency resolution because the
 current package metadata pulls `opencv-python`; the runtime dependencies are
-declared in the `analysis` extra so the image keeps the headless OpenCV build:
+declared in the `analysis` extra so the image keeps the headless OpenCV build.
+Its worker guards accept only `cpu_heavy` routes:
 
 ```powershell
 docker compose --profile analysis build analysis
@@ -82,11 +116,15 @@ still be split into separate images or profiles once their runtime contracts are
 clear, instead of being folded into either `toolkit` or the base `analysis`
 image.
 
+### Speech profile
+
 `speech` is an opt-in Compose profile with a dedicated `speech` Dockerfile
 target. It is intentionally a lightweight runtime shell for speech/Whisper work:
 it installs only the local package plus the small `speech` optional dependency
 group, sets `VIDEO_TOOLKIT_WORKER_PROFILE=speech`, and mounts a dedicated
-Whisper cache volume at `/workspace/.video-toolkit-data/whisper-cache`.
+Whisper cache volume at `/workspace/.video-toolkit-data/whisper-cache`. Its
+worker guards accept `gpu_optional` routes so speech work does not accidentally
+run in the generic CPU-light worker.
 
 The profile does not install `openai-whisper`, Torch, CUDA runtimes, or model
 weights by default. Those dependencies are large, runtime-specific, and can
@@ -103,6 +141,19 @@ compatibility alias `WHISPER_CACHE_DIR` so the adapter, future wrappers, and
 manual commands can reuse mounted model files without baking weights into the
 image. Model execution still requires `VET_ALLOW_WHISPER=1`; runtime downloads
 still require `VET_ALLOW_WHISPER_DOWNLOAD=1`.
+
+### Render profile
+
+`render` is an opt-in CPU-heavy profile for FFmpeg/render execution. It uses the
+default toolkit image with `ffmpeg`/`ffprobe`, accepts only `cpu_heavy` routes,
+and uses the same 4 GiB input/artifact and 900 second run guards as
+`cpu_heavy`. Keep render execution here or in a future dedicated worker image;
+do not move long-running render work into Platform Core.
+
+```powershell
+docker compose --profile render build render
+docker compose --profile render run --rm render
+```
 
 `tts` is an optional dependency group for future MOSS-TTS-Nano ONNX CPU work.
 It is not installed in the default image and the adapter does not download
@@ -147,4 +198,10 @@ Check the optional speech profile configuration:
 
 ```powershell
 docker compose --profile speech config
+```
+
+Check every P1.8 worker deployment profile configuration:
+
+```powershell
+docker compose --profile cpu_light --profile cpu_heavy --profile analysis --profile speech --profile render config
 ```

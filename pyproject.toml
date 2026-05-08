@@ -20,11 +20,13 @@ video-toolkit-agentctl-remote = "video_editing_toolkit.agentctl_remote:main"
 video-toolkit-agentctl-worker = "video_editing_toolkit.agentctl_worker:main"
 video-toolkit-local-api = "video_editing_toolkit.local_api:main"
 video-toolkit-platform-core = "video_editing_toolkit.platform_core:main"
+video-toolkit-platform-core-loop = "video_editing_toolkit.platform_core_loop:main"
 
 [project.optional-dependencies]
 dev = [
   "pytest>=8.0",
   "jsonschema>=4.22",
+  "pyyaml>=6.0",
 ]
 api = [
   "fastapi>=0.111",

@@ -305,3 +305,29 @@ learning/audit metadata preview
 Worker completions now also carry caller-safe `artifact_lifecycle_summary`
 metadata when input artifact refs are materialized or reused from cache. The
 summary includes only status, counts, and artifact ids.
+
+## P1.8 Explicit Local Loop Runner
+
+P1.8 adds `video_editing_toolkit.platform_core_loop` and the
+`video-toolkit-platform-core-loop` console entrypoint. The default command is
+still a preview: it prints `platform_core_local_loop_runner_preview.v0` and does
+not call agentctl, Platform Core, or artifact byte endpoints.
+
+Explicit local execution requires `--execute-local-loop`:
+
+```powershell
+py -m video_editing_toolkit.platform_core_loop `
+  --base-url http://127.0.0.1:8765 `
+  --artifact-base-url http://127.0.0.1:8010 `
+  --execute-local-loop
+```
+
+`--base-url` is the agentctl control-plane URL for `/runspecs/run`,
+heartbeat/lease, and completion. `--artifact-base-url` is the Platform Core or
+artifact service origin used by the worker when materializing `artifact_refs`.
+Keeping these separate lets the video worker stay outside Platform Core while
+still consuming authorized Platform Core artifact handles.
+
+P1.8 also adds local artifact cleanup summaries through `LocalArtifactStore`.
+Cleanup output is caller-safe: it reports counts and artifact ids, not local
+paths, storage locators, download URLs, or signed tokens.
