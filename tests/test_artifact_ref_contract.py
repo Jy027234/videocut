@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from video_editing_toolkit.runtime import RunResponse, RunStatus
 from video_editing_toolkit.storage import ArtifactRef, LocalArtifactStore
+from video_editing_toolkit.storage.signed_urls import extract_signed_artifact_token, verify_signed_artifact_token
 
 from conftest import FIXTURES_DIR, assert_no_public_path_or_command_leak, load_json, require_json_files
 
@@ -61,6 +62,41 @@ def test_artifact_ref_public_projection_hides_storage_uri_and_local_paths(tmp_pa
 
     assert "storage_uri" not in public_ref
     assert "local_path" not in public_ref
+    assert_no_public_path_or_command_leak(public_ref)
+
+
+def test_local_artifact_store_can_issue_signed_download_url_without_storage_details(tmp_path) -> None:
+    store = LocalArtifactStore(
+        tmp_path / "artifacts",
+        public_base_path="https://artifacts.local/download",
+        signing_secret="local-signing-secret",
+        signed_url_ttl_seconds=600,
+    )
+    internal_ref = store.put_bytes(
+        content=b"signed preview bytes",
+        artifact_type="preview_video",
+        owner_tenant_id="tenant_demo",
+        created_by_run_id="run_demo",
+        filename="preview.mp4",
+        mime_type="video/mp4",
+    )
+
+    public_ref = internal_ref.to_public_dict()
+    download_url = str(public_ref["download_url"])
+    signed_token = extract_signed_artifact_token(download_url)
+
+    assert signed_token is not None
+    access = verify_signed_artifact_token(
+        signed_token,
+        secret="local-signing-secret",
+        artifact_id=internal_ref.artifact_id,
+        checksum=internal_ref.checksum,
+    )
+    assert access.scope == "read"
+    assert "storage_uri" not in public_ref
+    assert "local_path" not in public_ref
+    assert "local-artifact://" not in download_url
+    assert str(tmp_path) not in download_url
     assert_no_public_path_or_command_leak(public_ref)
 
 

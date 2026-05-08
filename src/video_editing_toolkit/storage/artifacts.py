@@ -13,6 +13,8 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
+from video_editing_toolkit.storage.signed_urls import create_signed_artifact_token, sign_download_url
+
 
 ARTIFACT_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
 
@@ -63,9 +65,18 @@ class ArtifactRef:
 class LocalArtifactStore:
     """Stores artifacts on local disk while exposing only controlled refs."""
 
-    def __init__(self, root_dir: str | Path, *, public_base_path: str = "/local/artifacts") -> None:
+    def __init__(
+        self,
+        root_dir: str | Path,
+        *,
+        public_base_path: str = "/local/artifacts",
+        signing_secret: str | bytes | None = None,
+        signed_url_ttl_seconds: int = 60 * 60,
+    ) -> None:
         self.root_dir = Path(root_dir)
         self.public_base_path = public_base_path.rstrip("/")
+        self.signing_secret = signing_secret
+        self.signed_url_ttl_seconds = signed_url_ttl_seconds
         self.root_dir.mkdir(parents=True, exist_ok=True)
 
     def put_bytes(
@@ -159,6 +170,41 @@ class LocalArtifactStore:
         shutil.rmtree(artifact_dir)
         return True
 
+    def build_signed_download_token(
+        self,
+        ref: ArtifactRef,
+        *,
+        secret: str | bytes | None = None,
+        ttl_seconds: int | None = None,
+        scope: str = "read",
+    ) -> str:
+        signing_secret = secret if secret is not None else self.signing_secret
+        return create_signed_artifact_token(
+            artifact_id=ref.artifact_id,
+            checksum=ref.checksum,
+            secret=signing_secret or b"",
+            ttl_seconds=ttl_seconds if ttl_seconds is not None else self.signed_url_ttl_seconds,
+            scope=scope,
+        )
+
+    def build_signed_download_url(
+        self,
+        ref: ArtifactRef,
+        *,
+        secret: str | bytes | None = None,
+        ttl_seconds: int | None = None,
+        scope: str = "read",
+    ) -> str:
+        signing_secret = secret if secret is not None else self.signing_secret
+        return sign_download_url(
+            ref.download_url or f"{self.public_base_path}/{ref.artifact_id}",
+            artifact_id=ref.artifact_id,
+            checksum=ref.checksum,
+            secret=signing_secret or b"",
+            ttl_seconds=ttl_seconds if ttl_seconds is not None else self.signed_url_ttl_seconds,
+            scope=scope,
+        )
+
     def _artifact_dir(self, artifact_id: str) -> Path:
         safe_id = validate_artifact_id(artifact_id)
         root = self.root_dir.resolve()
@@ -186,6 +232,17 @@ class LocalArtifactStore:
         if ttl_seconds is not None:
             expires_at = datetime.now(timezone.utc) + timedelta(seconds=ttl_seconds)
 
+        checksum = f"sha256:{hashlib.sha256(content).hexdigest()}"
+        download_url = f"{self.public_base_path}/{artifact_id}"
+        if self.signing_secret is not None:
+            download_url = sign_download_url(
+                download_url,
+                artifact_id=artifact_id,
+                checksum=checksum,
+                secret=self.signing_secret,
+                ttl_seconds=self.signed_url_ttl_seconds,
+            )
+
         return ArtifactRef(
             artifact_id=artifact_id,
             artifact_type=artifact_type,
@@ -194,10 +251,10 @@ class LocalArtifactStore:
             storage_uri=f"local-artifact://{artifact_id}/{artifact_path.name}",
             mime_type=mime_type or mimetypes.guess_type(artifact_path.name)[0] or "application/octet-stream",
             size_bytes=len(content),
-            checksum=f"sha256:{hashlib.sha256(content).hexdigest()}",
+            checksum=checksum,
             data_class=data_class,
             retention_policy=retention_policy,
             expires_at=expires_at,
             access_policy=access_policy or {},
-            download_url=f"{self.public_base_path}/{artifact_id}",
+            download_url=download_url,
         )

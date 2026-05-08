@@ -16,12 +16,16 @@ from video_editing_toolkit.project_edit import (
     rollback_version,
 )
 from video_editing_toolkit.project_edit.artifacts import (
+    COMPOSITION_PLAN_ARTIFACT_TYPE,
     RENDER_CONFIG_ARTIFACT_TYPE,
     TIMELINE_ARTIFACT_TYPE,
+    composition_plan_artifact_payload,
     json_bytes,
+    preview_render_config,
     render_config_artifact_payload,
     timeline_artifact_payload,
 )
+from video_editing_toolkit.project_edit.compositor import build_composition_plan
 from video_editing_toolkit.project_edit.core import summarize_timeline
 from video_editing_toolkit.project_edit.models import get_default_store
 from video_editing_toolkit.resource_guard import ErrorCode
@@ -118,6 +122,14 @@ class ProjectEditAdapter(BaseAdapter):
         if version is None:
             raise RuntimeError(f"Project version {project_id}/{version_id} was not stored.")
 
+        composition_plan = build_composition_plan(
+            version.timeline,
+            render_config=preview_render_config(request.input),
+        )
+        output["composition_summary"] = composition_plan["summary"]
+        output["composition_warnings"] = composition_plan["warnings"]
+        output["composition_errors"] = composition_plan["errors"]
+
         timeline_ref = artifact_store.put_bytes(
             content=json_bytes(
                 timeline_artifact_payload(
@@ -147,6 +159,17 @@ class ProjectEditAdapter(BaseAdapter):
             artifact_refs.append(render_config_ref)
             output["render_config_artifact_ref"] = render_config_ref.to_public_dict()
 
+        composition_plan_ref = self._put_composition_plan_artifact(
+            request=request,
+            artifact_store=artifact_store,
+            project_id=project_id,
+            version_id=version_id,
+            composition_plan=composition_plan,
+            source_timeline_artifact_ref=timeline_ref.to_public_dict(),
+        )
+        artifact_refs.append(composition_plan_ref)
+        output["composition_plan_artifact_ref"] = composition_plan_ref.to_public_dict()
+
         output["artifact_refs"] = [ref.to_public_dict() for ref in artifact_refs]
         return output, tuple(artifact_refs)
 
@@ -165,6 +188,7 @@ class ProjectEditAdapter(BaseAdapter):
         timeline_summary: Mapping[str, Any]
         if version is not None:
             timeline_summary = summarize_timeline(version.timeline)
+            timeline = version.timeline
         else:
             timeline_summary = {
                 "duration_seconds": 0.0,
@@ -172,6 +196,15 @@ class ProjectEditAdapter(BaseAdapter):
                 "audio_tracks": 0,
                 "text_tracks": 0,
             }
+            timeline = {"tracks": {}, "transitions": []}
+
+        composition_plan = build_composition_plan(
+            timeline,
+            render_config=preview_render_config(request.input),
+        )
+        output["composition_summary"] = composition_plan["summary"]
+        output["composition_warnings"] = composition_plan["warnings"]
+        output["composition_errors"] = composition_plan["errors"]
 
         render_config_ref = self._put_render_config_artifact(
             request=request,
@@ -181,8 +214,20 @@ class ProjectEditAdapter(BaseAdapter):
             timeline_summary=timeline_summary,
         )
         output["render_config_artifact_ref"] = render_config_ref.to_public_dict()
-        output["artifact_refs"] = [render_config_ref.to_public_dict()]
-        return output, (render_config_ref,)
+
+        composition_plan_ref = self._put_composition_plan_artifact(
+            request=request,
+            artifact_store=artifact_store,
+            project_id=project_id,
+            version_id=version_id,
+            composition_plan=composition_plan,
+        )
+        output["composition_plan_artifact_ref"] = composition_plan_ref.to_public_dict()
+        output["artifact_refs"] = [
+            render_config_ref.to_public_dict(),
+            composition_plan_ref.to_public_dict(),
+        ]
+        return output, (render_config_ref, composition_plan_ref)
 
     def _put_render_config_artifact(
         self,
@@ -209,6 +254,33 @@ class ProjectEditAdapter(BaseAdapter):
             owner_tenant_id=request.context.tenant_id,
             created_by_run_id=request.context.run_id,
             filename="render_config.json",
+            mime_type="application/json",
+        )
+
+    def _put_composition_plan_artifact(
+        self,
+        *,
+        request: AdapterRequest,
+        artifact_store: LocalArtifactStore,
+        project_id: str,
+        version_id: str,
+        composition_plan: Mapping[str, Any],
+        source_timeline_artifact_ref: Mapping[str, Any] | None = None,
+    ) -> ArtifactRef:
+        return artifact_store.put_bytes(
+            content=json_bytes(
+                composition_plan_artifact_payload(
+                    project_id=project_id,
+                    version_id=version_id,
+                    run_id=request.context.run_id,
+                    composition_plan=composition_plan,
+                    source_timeline_artifact_ref=source_timeline_artifact_ref,
+                )
+            ),
+            artifact_type=COMPOSITION_PLAN_ARTIFACT_TYPE,
+            owner_tenant_id=request.context.tenant_id,
+            created_by_run_id=request.context.run_id,
+            filename="composition_plan.json",
             mime_type="application/json",
         )
 

@@ -14,6 +14,7 @@ from video_editing_toolkit.storage import (
     LocalArtifactStore,
     materialize_artifact_refs,
 )
+from video_editing_toolkit.storage.signed_urls import create_signed_artifact_token, sign_download_url
 
 
 def test_local_artifact_store_preserves_safe_artifact_id_and_rejects_traversal(tmp_path: Path) -> None:
@@ -182,6 +183,126 @@ def test_materialize_artifact_refs_enforces_max_size_after_fetch(tmp_path: Path)
 
     assert exc_info.value.error_code == "artifact_size_limit_exceeded"
     assert exc_info.value.artifact_id == "artifact_too_large"
+
+
+def test_materialize_artifact_refs_verifies_signed_download_url(tmp_path: Path) -> None:
+    content = b"signed platform artifact bytes"
+    artifact_id = "artifact_signed_video"
+    secret = "platform-local-signing-secret"
+    checksum = f"sha256:{hashlib.sha256(content).hexdigest()}"
+    signed_url = sign_download_url(
+        "/artifacts/download/input.mp4",
+        artifact_id=artifact_id,
+        checksum=checksum,
+        secret=secret,
+        ttl_seconds=600,
+    )
+    fetcher = FakeArtifactFetcher({f"http://platform.local{signed_url}": content})
+
+    summary = materialize_artifact_refs(
+        _envelope(content=content, artifact_id=artifact_id, download_url=signed_url),
+        artifact_store=LocalArtifactStore(tmp_path / "artifacts"),
+        config=ArtifactMaterializationConfig(
+            artifact_base_url="http://platform.local",
+            signed_url_secret=secret,
+            require_signed_urls=True,
+        ),
+        fetch_bytes=fetcher,
+    )
+
+    assert summary.materialized_count == 1
+    assert fetcher.requests[0]["url"] == f"http://platform.local{signed_url}"
+
+
+def test_materialize_artifact_refs_accepts_inline_signed_token(tmp_path: Path) -> None:
+    content = b"inline signed platform bytes"
+    artifact_id = "artifact_inline_signed"
+    secret = "platform-local-signing-secret"
+    checksum = f"sha256:{hashlib.sha256(content).hexdigest()}"
+    signed_token = create_signed_artifact_token(
+        artifact_id=artifact_id,
+        checksum=checksum,
+        secret=secret,
+        ttl_seconds=600,
+    )
+    envelope = _envelope(content=content, artifact_id=artifact_id)
+    envelope["artifact_refs"][0]["signed_token"] = signed_token
+    fetcher = FakeArtifactFetcher({"http://platform.local/artifacts/download/input.mp4": content})
+
+    summary = materialize_artifact_refs(
+        envelope,
+        artifact_store=LocalArtifactStore(tmp_path / "artifacts"),
+        config=ArtifactMaterializationConfig(
+            artifact_base_url="http://platform.local",
+            signed_url_secret=secret,
+            require_signed_urls=True,
+        ),
+        fetch_bytes=fetcher,
+    )
+
+    assert summary.materialized_count == 1
+    assert fetcher.requests[0]["url"] == "http://platform.local/artifacts/download/input.mp4"
+
+
+def test_materialize_artifact_refs_rejects_expired_signed_download_url(tmp_path: Path) -> None:
+    content = b"expired signed platform bytes"
+    artifact_id = "artifact_expired_signed"
+    secret = "platform-local-signing-secret"
+    signed_url = sign_download_url(
+        "/artifacts/download/input.mp4",
+        artifact_id=artifact_id,
+        checksum=f"sha256:{hashlib.sha256(content).hexdigest()}",
+        secret=secret,
+        expires_at=1,
+    )
+    fetcher = FakeArtifactFetcher({})
+
+    with pytest.raises(ArtifactMaterializationError) as exc_info:
+        materialize_artifact_refs(
+            _envelope(content=content, artifact_id=artifact_id, download_url=signed_url),
+            artifact_store=LocalArtifactStore(tmp_path / "artifacts"),
+            config=ArtifactMaterializationConfig(
+                artifact_base_url="http://platform.local",
+                signed_url_secret=secret,
+                require_signed_urls=True,
+            ),
+            fetch_bytes=fetcher,
+        )
+
+    assert exc_info.value.error_code == "artifact_signed_token_expired"
+    assert exc_info.value.artifact_id == artifact_id
+    assert fetcher.requests == []
+
+
+def test_materialize_artifact_refs_rejects_tampered_signed_download_url(tmp_path: Path) -> None:
+    content = b"tampered signed platform bytes"
+    artifact_id = "artifact_tampered_signed"
+    secret = "platform-local-signing-secret"
+    signed_url = sign_download_url(
+        "/artifacts/download/input.mp4",
+        artifact_id=artifact_id,
+        checksum=f"sha256:{hashlib.sha256(content).hexdigest()}",
+        secret=secret,
+        ttl_seconds=600,
+    )
+    tampered_url = signed_url.replace("sat=", "sat=x", 1)
+    fetcher = FakeArtifactFetcher({})
+
+    with pytest.raises(ArtifactMaterializationError) as exc_info:
+        materialize_artifact_refs(
+            _envelope(content=content, artifact_id=artifact_id, download_url=tampered_url),
+            artifact_store=LocalArtifactStore(tmp_path / "artifacts"),
+            config=ArtifactMaterializationConfig(
+                artifact_base_url="http://platform.local",
+                signed_url_secret=secret,
+                require_signed_urls=True,
+            ),
+            fetch_bytes=fetcher,
+        )
+
+    assert exc_info.value.error_code == "artifact_signed_token_invalid"
+    assert exc_info.value.artifact_id == artifact_id
+    assert fetcher.requests == []
 
 
 class FakeArtifactFetcher:

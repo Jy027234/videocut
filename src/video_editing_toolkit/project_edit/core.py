@@ -5,6 +5,7 @@ from __future__ import annotations
 from copy import deepcopy
 from typing import Any, Mapping
 
+from .compositor import build_composition_plan, composition_warning_messages
 from .models import InMemoryProjectStore, ProjectVersion, empty_timeline, get_default_store
 from .validator import TimelinePatchValidationError, validate_timeline_patch
 
@@ -81,6 +82,9 @@ def apply_timeline_patch(
     for operation in operations:
         _apply_operation(timeline, operation, warnings)
 
+    composition_plan = build_composition_plan(timeline)
+    warnings.extend(composition_warning_messages(composition_plan))
+
     new_version = active_store.add_version(
         project_id,
         parent_version_id=base_version.version_id,
@@ -92,6 +96,9 @@ def apply_timeline_patch(
         "base_version_id": base_version.version_id,
         "new_version_id": new_version.version_id,
         "timeline_summary": summarize_timeline(timeline),
+        "composition_summary": composition_plan["summary"],
+        "composition_warnings": composition_plan["warnings"],
+        "composition_errors": composition_plan["errors"],
         "warnings": warnings,
         "artifact_refs": [],
     }
@@ -103,10 +110,16 @@ def apply_timeline_patch(
 def render_preview(request: Mapping[str, Any]) -> dict[str, Any]:
     project_id = _project_id(request)
     version_id = str(request.get("version_id") or request.get("base_version_id") or "ver_0001")
+    version = get_default_store().get_version(project_id, version_id)
+    timeline = version.timeline if version is not None else empty_timeline()
+    composition_plan = build_composition_plan(timeline)
     return {
         "project_id": project_id,
         "version_id": version_id,
         "preview_artifact_ref": _preview_ref(project_id, version_id),
+        "composition_summary": composition_plan["summary"],
+        "composition_warnings": composition_plan["warnings"],
+        "composition_errors": composition_plan["errors"],
         "warnings": [],
     }
 

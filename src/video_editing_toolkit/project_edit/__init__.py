@@ -1,5 +1,10 @@
 """Dependency-free P0 project editing core."""
 
+from .compositor import (
+    COMPOSITION_PLAN_SCHEMA,
+    build_composition_plan,
+    composition_warning_messages,
+)
 from .core import (
     ProjectEditError,
     apply_timeline_patch,
@@ -20,13 +25,16 @@ from .validator import (
 
 __all__ = [
     "ALLOWED_OPERATIONS",
+    "COMPOSITION_PLAN_SCHEMA",
     "FORBIDDEN_PATCH_KEYS",
     "InMemoryProjectStore",
     "ProjectEditError",
     "ProjectVersion",
     "TimelinePatchValidationError",
     "apply_timeline_patch",
+    "build_composition_plan",
     "compare_versions",
+    "composition_warning_messages",
     "create_project",
     "generate_edit_plan",
     "get_default_store",

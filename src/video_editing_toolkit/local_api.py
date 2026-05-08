@@ -27,6 +27,7 @@ from video_editing_toolkit.runtime import (
     RunRequest,
     register_p0_adapter_handlers,
 )
+from video_editing_toolkit.runtime.retry import coerce_max_attempts
 from video_editing_toolkit.storage import LocalArtifactStore
 
 
@@ -269,8 +270,20 @@ def _run_request_from_payload(payload: Mapping[str, Any]) -> RunRequest:
         policy_context=policy_context,
         dry_run=bool(payload.get("dry_run", False)),
         trace_ref=trace_ref,
+        max_attempts=_max_attempts_from_payload(payload, policy_context=policy_context),
         **request_kwargs,
     )
+
+
+def _max_attempts_from_payload(
+    payload: Mapping[str, Any],
+    *,
+    policy_context: Any,
+) -> int:
+    raw_value = payload.get("max_attempts")
+    if raw_value is None:
+        raw_value = policy_context.quota_policy.get("max_attempts")
+    return coerce_max_attempts(raw_value)
 
 
 def _collect_public_artifacts(value: Any) -> list[dict[str, Any]]:

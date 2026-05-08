@@ -32,6 +32,7 @@ def test_local_api_posts_agentctl_like_envelope_and_queries_status(tmp_path: Pat
         "toolkit_id": "video-editing-toolkit",
         "capability": "video.project_edit.create_project",
         "version": "0.1.0-p0",
+        "max_attempts": 2,
         "artifact_store_root": str(tmp_path / "input-root-should-not-leak"),
         "private_key": secret_value,
         "policy_context": {
@@ -66,6 +67,13 @@ def test_local_api_posts_agentctl_like_envelope_and_queries_status(tmp_path: Pat
     assert body["status"] == "succeeded"
     assert body["output"]["project_id"] == "proj_local_api_create"
     assert body["output"]["adapter_name"] == "project_edit"
+    assert body["retry"]["attempt"] == 1
+    assert body["retry"]["max_attempts"] == 2
+    assert body["retry"]["terminal_reason"] == "succeeded"
+    assert body["usage_summary"]["billing_ready"] is True
+    assert body["usage_summary"]["charged"] is False
+    assert body["usage_summary"]["capability"] == payload["capability"]
+    assert body["usage_summary"]["capability_usage"][payload["capability"]]["runs"] == 1
     _assert_local_api_safe(body, artifact_root, secret_value)
 
     status = client.get(f"/local/toolkit-runs/{payload['run_id']}")
@@ -73,6 +81,8 @@ def test_local_api_posts_agentctl_like_envelope_and_queries_status(tmp_path: Pat
     assert status.json()["status"] == "succeeded"
     assert status.json()["trace_ref"] == "trace_platform_local_api"
     assert status.json()["output"]["project_id"] == "proj_local_api_create"
+    assert status.json()["retry"]["max_attempts"] == 2
+    assert status.json()["usage_summary"]["billing_mode"] == "local_preview_no_charge"
     _assert_local_api_safe(status.json(), artifact_root, secret_value)
 
 
@@ -82,6 +92,7 @@ def test_local_api_unknown_capability_returns_queryable_failure(tmp_path: Path) 
         "run_id": "run_local_api_unknown",
         "toolkit_id": "video-editing-toolkit",
         "capability": "video.unknown.noop",
+        "max_attempts": 3,
         "input": {"project_id": "proj_local_api_unknown"},
     }
 
@@ -92,6 +103,10 @@ def test_local_api_unknown_capability_returns_queryable_failure(tmp_path: Path) 
     assert body["status"] == "failed"
     assert body["error_code"] == "handler_not_registered"
     assert "No local handler registered" in body["error_message"]
+    assert body["retry"]["attempt"] == 1
+    assert body["retry"]["max_attempts"] == 3
+    assert body["retry"]["scheduled"] is False
+    assert body["retry"]["terminal_reason"] == "terminal_error"
     _assert_local_api_safe(body, tmp_path / "artifacts")
 
     status = client.get("/local/toolkit-runs/run_local_api_unknown")
@@ -240,6 +255,7 @@ def test_local_api_cancels_queued_run_without_processing(tmp_path: Path) -> None
         "trace_id": "trace_cancel_from_platform",
         "toolkit_id": "video-editing-toolkit",
         "capability": "video.project_edit.create_project",
+        "max_attempts": 3,
         "input": {"project_id": "proj_should_not_process"},
     }
 
@@ -254,6 +270,8 @@ def test_local_api_cancels_queued_run_without_processing(tmp_path: Path) -> None
     assert cancelled.status_code == 200
     assert cancelled.json()["status"] == "cancelled"
     assert cancelled.json()["trace_ref"] == "trace_cancel_from_platform"
+    assert cancelled.json()["retry"]["scheduled"] is False
+    assert cancelled.json()["retry"]["terminal_reason"] == "cancelled"
     assert status.status_code == 200
     assert status.json()["status"] == "cancelled"
     assert missing.status_code == 404

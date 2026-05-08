@@ -6,6 +6,7 @@ import json
 from copy import deepcopy
 from typing import Any, Mapping
 
+from .compositor import COMPOSITION_PLAN_SCHEMA
 from .core import summarize_timeline
 from .models import ProjectVersion
 
@@ -14,6 +15,7 @@ TIMELINE_SCHEMA = "video_editing_toolkit.project_timeline.v0"
 RENDER_CONFIG_SCHEMA = "video_editing_toolkit.render_config.v0"
 TIMELINE_ARTIFACT_TYPE = "timeline_json"
 RENDER_CONFIG_ARTIFACT_TYPE = "render_config_json"
+COMPOSITION_PLAN_ARTIFACT_TYPE = "composition_plan_json"
 
 
 def timeline_artifact_payload(
@@ -59,7 +61,33 @@ def render_config_artifact_payload(
             if source_timeline_artifact_ref is not None
             else None
         ),
-        "render_config": _preview_render_config(input_payload),
+        "render_config": preview_render_config(input_payload),
+    }
+
+
+def composition_plan_artifact_payload(
+    *,
+    project_id: str,
+    version_id: str,
+    run_id: str,
+    composition_plan: Mapping[str, Any],
+    source_timeline_artifact_ref: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Return the persisted composition_plan.json contract for preview renders."""
+
+    summary = composition_plan.get("summary", {})
+    return {
+        "schema": COMPOSITION_PLAN_SCHEMA,
+        "project_id": project_id,
+        "version_id": version_id,
+        "created_by_run_id": run_id,
+        "source_timeline_artifact_ref": (
+            dict(source_timeline_artifact_ref)
+            if source_timeline_artifact_ref is not None
+            else None
+        ),
+        "composition_summary": deepcopy(summary) if isinstance(summary, Mapping) else {},
+        "composition_plan": deepcopy(composition_plan),
     }
 
 
@@ -67,7 +95,7 @@ def json_bytes(payload: Mapping[str, Any]) -> bytes:
     return json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True).encode("utf-8")
 
 
-def _preview_render_config(input_payload: Mapping[str, Any]) -> dict[str, Any]:
+def preview_render_config(input_payload: Mapping[str, Any]) -> dict[str, Any]:
     profile = _string_value(
         input_payload.get("preview_profile", input_payload.get("profile", input_payload.get("target"))),
         "review",

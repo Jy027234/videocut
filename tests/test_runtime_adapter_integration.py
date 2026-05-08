@@ -75,6 +75,10 @@ def test_local_runtime_processes_registered_project_edit_adapter(tmp_path) -> No
     assert processed.output["queue_topic"] == "video.project_edit"
     assert processed.output["asset_count"] == 0
     assert processed.trace_ref == f"local_trace:{request.run_id}"
+    assert processed.retry["attempt"] == 1
+    assert processed.retry["terminal_reason"] == "succeeded"
+    assert processed.usage_summary["billing_mode"] == "local_preview_no_charge"
+    assert processed.usage_summary["capability_usage"][request.capability]["runs"] == 1
 
 
 def test_ffmpeg_probe_media_succeeds_with_minimal_wav_when_ffprobe_is_available(

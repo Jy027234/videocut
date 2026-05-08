@@ -19,6 +19,13 @@ from video_editing_toolkit.agentctl_worker import (
     toolkit_envelope_from_job,
 )
 from video_editing_toolkit.agentctl_worker_runner import WorkerLocalExecutionTimeout
+from video_editing_toolkit.agentctl_worker_runner import WorkerLocalExecutionCancelled
+from video_editing_toolkit.worker_pool import (
+    DOCKER_EXECUTION_BACKEND,
+    WORKER_POOL_CONTRACT,
+    WorkerExecutionPoolConfig,
+    WorkerExecutionPoolRegistry,
+)
 from video_editing_toolkit.storage import LocalArtifactStore
 
 
@@ -211,19 +218,61 @@ def test_worker_registered_docker_backend_fails_stably_until_pool_exists(tmp_pat
         input_payload={"project_id": "proj_worker_docker_backend"},
     )
     fake = FakeAgentctlWorkerClient(lease_job=job)
+    registry = WorkerExecutionPoolRegistry(
+        {
+            DOCKER_EXECUTION_BACKEND: WorkerExecutionPoolConfig(
+                backend=DOCKER_EXECUTION_BACKEND,
+                enabled=False,
+                endpoint="https://docker-control.internal/private",
+            ),
+        }
+    )
     worker = VideoToolkitAgentctlWorker(
         _config(tmp_path, execution_mode="docker"),
         client=fake,
+        execution_pool_registry=registry,
     )
 
     result = worker.run_once()
     complete_body = fake.requests[-1]["body"]
+    rendered = json.dumps({"result": result, "complete": complete_body}, sort_keys=True)
 
     assert result["ok"] is False
     assert complete_body["status"] == "failed"
     assert complete_body["result"]["error_code"] == "video_toolkit_worker.execution_backend_unavailable"
     assert complete_body["result"]["reason_code"] == "worker.execution_backend_unavailable"
     assert complete_body["result"]["execution_backend"] == "docker"
+    assert complete_body["result"]["execution_pool_probe"]["backend"] == "docker"
+    assert complete_body["result"]["execution_pool_probe"]["available"] is False
+    assert "docker-control.internal" not in rendered
+    assert_no_public_path_or_command_leak(result)
+    assert_no_public_path_or_command_leak(complete_body)
+
+
+def test_worker_inflight_cancel_checker_reports_stable_failure(tmp_path: Path) -> None:
+    job = _leased_job(
+        job_id="rtjob_worker_inflight_cancel",
+        capability="video.project_edit.create_project",
+        input_payload={"project_id": "proj_worker_inflight_cancel"},
+    )
+    checks = iter([False, False, True])
+    fake = FakeAgentctlWorkerClient(lease_job=job)
+    worker = VideoToolkitAgentctlWorker(
+        _config(tmp_path, execution_mode="subprocess"),
+        client=fake,
+        cancellation_checker=lambda _job: next(checks),
+        local_runner=_cancelling_runner,
+    )
+
+    result = worker.run_once()
+    complete_body = fake.requests[-1]["body"]
+
+    assert result["ok"] is False
+    assert result["status"] == "failed"
+    assert complete_body["status"] == "failed"
+    assert complete_body["result"]["error_code"] == "video_toolkit_worker.execution_cancelled"
+    assert complete_body["result"]["reason_code"] == "worker.execution_cancelled"
+    assert complete_body["result"]["cancelled"] is True
     assert_no_public_path_or_command_leak(result)
     assert_no_public_path_or_command_leak(complete_body)
 
@@ -464,9 +513,14 @@ def test_worker_heartbeat_advertises_execution_policy(tmp_path: Path) -> None:
     assert heartbeat_body["metadata"]["max_run_timeout_seconds"] == 321
     assert heartbeat_body["metadata"]["execution_mode"] == "in_process"
     assert heartbeat_body["metadata"]["execution_backend"] == "in_process"
+    assert heartbeat_body["metadata"]["execution_pool_contract"] == WORKER_POOL_CONTRACT
+    assert heartbeat_body["metadata"]["execution_pool"]["backend"] == "in_process"
+    assert heartbeat_body["metadata"]["execution_pool"]["execution_supported"] is True
     assert heartbeat_body["metadata"]["worker_lifecycle_contract"] == "p0.14_execution_backend_attempt_trace_usage"
     assert heartbeat_body["metadata"]["supported_execution_backends"] == ["docker", "in_process", "remote", "subprocess"]
     assert heartbeat_body["metadata"]["retry_policy"]["mode"] == "attempt_preflight_only"
+    assert heartbeat_body["metadata"]["cancel_contract"] == "pre_execution_and_subprocess_in_flight_cancel_or_kill"
+    assert heartbeat_body["metadata"]["process_kill_contract"] == "terminate_then_kill_child_or_process_group"
     assert_no_public_path_or_command_leak(result)
 
 
@@ -794,6 +848,11 @@ class FakeArtifactBytesFetcher:
 
 def _timeout_runner(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
     raise WorkerLocalExecutionTimeout()
+
+
+def _cancelling_runner(*_args: Any, cancellation_checker: Any, **_kwargs: Any) -> dict[str, Any]:
+    assert cancellation_checker() is True
+    raise WorkerLocalExecutionCancelled()
 
 
 def _unexpected_runner(*_args: Any, **_kwargs: Any) -> dict[str, Any]:

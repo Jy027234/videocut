@@ -74,8 +74,11 @@ def test_project_edit_timeline_and_render_config_artifacts_validate_with_local_r
 
     timeline_ref = _single_artifact_ref(patch_response, "timeline_json")
     render_config_ref = _single_artifact_ref(patch_response, "render_config_json")
+    composition_plan_ref = _single_artifact_ref(patch_response, "composition_plan_json")
     assert patch_response.output["timeline_artifact_ref"]["artifact_id"] == timeline_ref.artifact_id
     assert patch_response.output["render_config_artifact_ref"]["artifact_id"] == render_config_ref.artifact_id
+    assert patch_response.output["composition_plan_artifact_ref"]["artifact_id"] == composition_plan_ref.artifact_id
+    assert patch_response.output["composition_summary"]["video_clip_count"] == 1
 
     timeline_payload, timeline_path = _artifact_json_payload(service, timeline_ref)
     assert timeline_path.name == "timeline.json"
@@ -94,6 +97,14 @@ def test_project_edit_timeline_and_render_config_artifacts_validate_with_local_r
     assert patch_render_payload["render_config"]["mode"] == "preview"
     assert patch_render_payload["render_config"]["max_duration_seconds"] == 6.25
 
+    composition_plan_payload, composition_plan_path = _artifact_json_payload(service, composition_plan_ref)
+    assert composition_plan_path.name == "composition_plan.json"
+    assert_no_public_path_or_command_leak(composition_plan_payload)
+    assert composition_plan_payload["schema"] == "video_editing_toolkit.composition_plan.v0"
+    assert composition_plan_payload["source_timeline_artifact_ref"]["artifact_id"] == timeline_ref.artifact_id
+    assert composition_plan_payload["composition_summary"]["duration_seconds"] == 6.25
+    assert composition_plan_payload["composition_plan"]["video_layers"][0]["clips"][0]["clip_id"] == "clip_p08_0001"
+
     preview_response = _run(
         service,
         "video.project_edit.render_preview",
@@ -109,9 +120,14 @@ def test_project_edit_timeline_and_render_config_artifacts_validate_with_local_r
     assert_no_public_path_or_command_leak(preview_response.to_public_dict())
 
     preview_render_config_ref = _single_artifact_ref(preview_response, "render_config_json")
+    preview_composition_plan_ref = _single_artifact_ref(preview_response, "composition_plan_json")
     assert (
         preview_response.output["render_config_artifact_ref"]["artifact_id"]
         == preview_render_config_ref.artifact_id
+    )
+    assert (
+        preview_response.output["composition_plan_artifact_ref"]["artifact_id"]
+        == preview_composition_plan_ref.artifact_id
     )
     preview_render_payload, preview_render_path = _artifact_json_payload(
         service,
@@ -124,6 +140,14 @@ def test_project_edit_timeline_and_render_config_artifacts_validate_with_local_r
     assert preview_render_payload["render_config"]["profile"] == "approval"
     assert preview_render_payload["render_config"]["resolution"] == "480p"
     assert preview_render_payload["render_config"]["include_audio"] is False
+
+    preview_composition_payload, preview_composition_path = _artifact_json_payload(
+        service,
+        preview_composition_plan_ref,
+    )
+    assert preview_composition_path.name == "composition_plan.json"
+    assert_no_public_path_or_command_leak(preview_composition_payload)
+    assert preview_composition_payload["composition_plan"]["render_config"]["profile"] == "approval"
 
 
 def _artifact_manifest_validator() -> Any:

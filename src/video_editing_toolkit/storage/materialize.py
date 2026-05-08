@@ -13,6 +13,12 @@ from pathlib import Path
 from typing import Any
 
 from video_editing_toolkit.storage.artifacts import LocalArtifactStore, validate_artifact_id
+from video_editing_toolkit.storage.signed_urls import (
+    SignedArtifactAccess,
+    SignedArtifactUrlError,
+    extract_signed_artifact_token,
+    verify_signed_artifact_token,
+)
 
 
 DEFAULT_MAX_ARTIFACT_BYTES = 512 * 1024 * 1024
@@ -41,6 +47,8 @@ class ArtifactMaterializationConfig:
     token: str | None = None
     timeout_seconds: float = 10.0
     max_artifact_bytes: int = DEFAULT_MAX_ARTIFACT_BYTES
+    signed_url_secret: str | bytes | None = None
+    require_signed_urls: bool = False
 
 
 @dataclass(frozen=True)
@@ -95,13 +103,24 @@ def materialize_artifact_refs(
 
         expected_size = _optional_size(raw_ref.get("size_bytes"), artifact_id=artifact_id)
         expected_checksum = _optional_sha256(raw_ref.get("checksum"), artifact_id=artifact_id)
+        download_url = _optional_download_url(raw_ref, artifact_id=artifact_id)
+        signed_access = None
+        if download_url is not None or raw_ref.get("signed_token") is not None or config.require_signed_urls:
+            signed_access = _verify_signed_access(
+                raw_ref,
+                download_url or "",
+                artifact_id=artifact_id,
+                expected_checksum=expected_checksum,
+                config=config,
+            )
+        effective_checksum = expected_checksum or (signed_access.checksum if signed_access else None)
         local_path = artifact_store.open_local_path(artifact_id)
         if local_path is not None:
             _assert_local_content(
                 local_path.read_bytes(),
                 artifact_id=artifact_id,
                 expected_size=expected_size,
-                expected_checksum=expected_checksum,
+                expected_checksum=effective_checksum,
             )
             cached += 1
             continue
@@ -122,7 +141,7 @@ def materialize_artifact_refs(
             content,
             artifact_id=artifact_id,
             expected_size=expected_size,
-            expected_checksum=expected_checksum,
+            expected_checksum=effective_checksum,
         )
         artifact_store.put_bytes(
             content=content,
@@ -262,14 +281,84 @@ def _assert_tenant_allowed(
 
 
 def _download_url(raw_ref: Mapping[str, Any], *, artifact_id: str) -> str:
-    value = raw_ref.get("download_url")
-    if not isinstance(value, str) or not value.strip():
+    value = _optional_download_url(raw_ref, artifact_id=artifact_id)
+    if value is None:
         raise ArtifactMaterializationError(
             "artifact_download_url_required",
             "Artifact ref requires a controlled download_url.",
             artifact_id=artifact_id,
         )
+    return value
+
+
+def _optional_download_url(raw_ref: Mapping[str, Any], *, artifact_id: str) -> str | None:
+    value = raw_ref.get("download_url")
+    if value is None:
+        return None
+    if not isinstance(value, str) or not value.strip():
+        raise ArtifactMaterializationError(
+            "artifact_download_url_invalid",
+            "Artifact ref requires a controlled download_url.",
+            artifact_id=artifact_id,
+        )
     return value.strip()
+
+
+def _verify_signed_access(
+    raw_ref: Mapping[str, Any],
+    download_url: str,
+    *,
+    artifact_id: str,
+    expected_checksum: str | None,
+    config: ArtifactMaterializationConfig,
+) -> SignedArtifactAccess | None:
+    token = _signed_token(raw_ref, download_url, artifact_id=artifact_id)
+    if token is None:
+        if config.require_signed_urls:
+            raise ArtifactMaterializationError(
+                "artifact_signed_token_required",
+                "Artifact materialization requires a signed download token.",
+                artifact_id=artifact_id,
+            )
+        return None
+    if not config.signed_url_secret:
+        raise ArtifactMaterializationError(
+            "artifact_signed_token_secret_required",
+            "Artifact materialization requires a signed URL secret.",
+            artifact_id=artifact_id,
+        )
+    try:
+        return verify_signed_artifact_token(
+            token,
+            secret=config.signed_url_secret,
+            artifact_id=artifact_id,
+            checksum=expected_checksum,
+            scope="read",
+        )
+    except SignedArtifactUrlError as exc:
+        raise ArtifactMaterializationError(
+            exc.error_code,
+            exc.error_message,
+            artifact_id=artifact_id,
+        ) from exc
+
+
+def _signed_token(raw_ref: Mapping[str, Any], download_url: str, *, artifact_id: str) -> str | None:
+    inline_token = raw_ref.get("signed_token")
+    if inline_token is not None and not isinstance(inline_token, str):
+        raise ArtifactMaterializationError(
+            "artifact_signed_token_invalid",
+            "Artifact signed token is invalid.",
+            artifact_id=artifact_id,
+        )
+    url_token = extract_signed_artifact_token(download_url)
+    if inline_token and url_token and inline_token != url_token:
+        raise ArtifactMaterializationError(
+            "artifact_signed_token_invalid",
+            "Artifact signed token is invalid.",
+            artifact_id=artifact_id,
+        )
+    return inline_token or url_token
 
 
 def _resolve_download_url(

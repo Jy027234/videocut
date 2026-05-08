@@ -49,6 +49,7 @@ class RunRequest:
     policy_context: PolicyContext = field(default_factory=PolicyContext)
     dry_run: bool = False
     trace_ref: str | None = None
+    max_attempts: int = 1
 
 
 @dataclass(slots=True)
@@ -59,6 +60,8 @@ class RunResponse:
     output: dict[str, Any] = field(default_factory=dict)
     artifact_refs: list[ArtifactRef] = field(default_factory=list)
     usage_metrics: dict[str, Any] = field(default_factory=dict)
+    usage_summary: dict[str, Any] = field(default_factory=dict)
+    retry: dict[str, Any] = field(default_factory=dict)
     trace_ref: str | None = None
     error_code: str | None = None
     error_message: str | None = None
@@ -76,6 +79,8 @@ class RunResponse:
                 for artifact_ref in self.artifact_refs
             ],
             "usage_metrics": _to_public_value(self.usage_metrics),
+            "usage_summary": _to_public_value(self.usage_summary),
+            "retry": _to_public_value(self.retry),
             "trace_ref": self.trace_ref,
             "error_code": self.error_code,
             "error_message": self.error_message,
@@ -110,6 +115,8 @@ class RunRecord:
     created_at: datetime = field(default_factory=utc_now)
     updated_at: datetime = field(default_factory=utc_now)
     cancelled_at: datetime | None = None
+    attempt: int = 0
+    max_attempts: int = 1
 
     def update_status(
         self,

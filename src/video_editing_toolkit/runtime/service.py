@@ -16,6 +16,15 @@ from video_editing_toolkit.runtime.models import (
     RunStatus,
 )
 from video_editing_toolkit.runtime.queue import InMemoryLocalQueue
+from video_editing_toolkit.runtime.retry import (
+    cancelled_retry_state,
+    coerce_max_attempts,
+    complete_retry_state,
+    failure_retry_state,
+    initial_retry_state,
+    running_retry_state,
+)
+from video_editing_toolkit.runtime.usage import build_usage_summary
 from video_editing_toolkit.storage.artifacts import ArtifactRef, LocalArtifactStore
 
 RunHandler = Callable[[RunRequest, LocalArtifactStore], dict[str, Any] | RunResponse]
@@ -45,13 +54,20 @@ class LocalRunService:
         self._handlers[(toolkit_id, capability)] = handler
 
     def submit(self, request: RunRequest) -> RunResponse:
+        max_attempts = coerce_max_attempts(request.max_attempts)
+        request.max_attempts = max_attempts
         response = RunResponse(
             run_id=request.run_id,
             tool_call_id=request.tool_call_id,
             status=RunStatus.QUEUED,
+            retry=initial_retry_state(max_attempts=max_attempts),
             trace_ref=request.trace_ref or f"local_trace:{request.run_id}",
         )
-        record = RunRecord(request=request, response=response)
+        record = RunRecord(
+            request=request,
+            response=response,
+            max_attempts=max_attempts,
+        )
 
         with self._lock:
             self._records[request.run_id] = record
@@ -86,6 +102,10 @@ class LocalRunService:
 
             self.queue.cancel(run_id)
             record.cancelled_at = datetime.now(timezone.utc)
+            record.response.retry = cancelled_retry_state(
+                attempt=record.attempt,
+                max_attempts=record.max_attempts,
+            )
             record.update_status(RunStatus.CANCELLED)
             return deepcopy(record.response)
 
@@ -123,6 +143,14 @@ class LocalRunService:
                 return None
             if record.response.status == RunStatus.CANCELLED:
                 return deepcopy(record.response)
+            if record.response.status in {RunStatus.SUCCEEDED, RunStatus.FAILED}:
+                return deepcopy(record.response)
+            record.attempt += 1
+            attempt = record.attempt
+            record.response.retry = running_retry_state(
+                attempt=attempt,
+                max_attempts=record.max_attempts,
+            )
             record.update_status(RunStatus.RUNNING)
 
         started = perf_counter()
@@ -130,37 +158,33 @@ class LocalRunService:
         handler = self._handlers.get((request.toolkit_id, request.capability))
 
         if handler is None:
-            record.update_status(
-                RunStatus.FAILED,
+            response = RunResponse(
+                run_id=request.run_id,
+                tool_call_id=request.tool_call_id,
+                status=RunStatus.FAILED,
+                trace_ref=record.response.trace_ref,
                 error_code="handler_not_registered",
                 error_message=(
                     f"No local handler registered for "
                     f"{request.toolkit_id}.{request.capability}."
                 ),
             )
-            return deepcopy(record.response)
+            return self._complete_attempt(record, response, started=started)
 
         try:
             result = handler(request, self.artifact_store)
             response = self._coerce_handler_result(record, result)
-            response.usage_metrics.setdefault(
-                "runtime_ms",
-                round((perf_counter() - started) * 1000, 3),
-            )
-            record.response = response
-            record.updated_at = datetime.now(timezone.utc)
-            return deepcopy(response)
+            return self._complete_attempt(record, response, started=started)
         except Exception as exc:
-            record.update_status(
-                RunStatus.FAILED,
+            response = RunResponse(
+                run_id=request.run_id,
+                tool_call_id=request.tool_call_id,
+                status=RunStatus.FAILED,
+                trace_ref=record.response.trace_ref,
                 error_code=exc.__class__.__name__,
                 error_message=str(exc),
             )
-            record.response.usage_metrics["runtime_ms"] = round(
-                (perf_counter() - started) * 1000,
-                3,
-            )
-            return deepcopy(record.response)
+            return self._complete_attempt(record, response, started=started)
 
     def process_public(self, run_id: str) -> dict[str, Any] | None:
         response = self.process(run_id)
@@ -186,3 +210,62 @@ class LocalRunService:
             usage_metrics=result.get("usage_metrics", {}),
             trace_ref=record.response.trace_ref,
         )
+
+    def _complete_attempt(
+        self,
+        record: RunRecord,
+        response: RunResponse,
+        *,
+        started: float,
+    ) -> RunResponse:
+        runtime_ms = round((perf_counter() - started) * 1000, 3)
+        existing_runtime_ms = response.usage_metrics.get("runtime_ms")
+        if isinstance(existing_runtime_ms, bool) or not isinstance(existing_runtime_ms, (int, float)):
+            response.usage_metrics["runtime_ms"] = runtime_ms
+        else:
+            runtime_ms = round(float(existing_runtime_ms), 3)
+        attempt = record.attempt
+
+        if response.status == RunStatus.SUCCEEDED:
+            response.retry = complete_retry_state(
+                attempt=attempt,
+                max_attempts=record.max_attempts,
+            )
+        elif response.status == RunStatus.FAILED:
+            response.retry, decision = failure_retry_state(
+                attempt=attempt,
+                max_attempts=record.max_attempts,
+                error_code=response.error_code,
+            )
+            if decision.should_retry:
+                response.status = RunStatus.QUEUED
+        else:
+            response.retry = running_retry_state(
+                attempt=attempt,
+                max_attempts=record.max_attempts,
+            )
+
+        response.usage_summary = build_usage_summary(
+            request=record.request,
+            response=response,
+            runtime_ms=runtime_ms,
+            attempt=attempt,
+        )
+
+        with self._lock:
+            if record.cancelled_at is not None:
+                record.response.retry = cancelled_retry_state(
+                    attempt=attempt,
+                    max_attempts=record.max_attempts,
+                )
+                record.update_status(RunStatus.CANCELLED)
+                return deepcopy(record.response)
+
+            record.response = response
+            record.updated_at = datetime.now(timezone.utc)
+            if (
+                response.status == RunStatus.QUEUED
+                and response.retry.get("scheduled") is True
+            ):
+                self.queue.enqueue(record.request.run_id)
+            return deepcopy(record.response)

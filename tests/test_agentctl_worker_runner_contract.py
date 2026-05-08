@@ -9,9 +9,16 @@ from typing import Any
 import pytest
 
 from video_editing_toolkit.agentctl_worker_runner import (
+    WorkerExecutionBackendUnavailable,
+    WorkerLocalExecutionCancelled,
     WorkerLocalExecutionError,
     WorkerLocalExecutionTimeout,
     run_local_agentctl,
+)
+from video_editing_toolkit.worker_pool import (
+    DOCKER_EXECUTION_BACKEND,
+    WorkerExecutionPoolConfig,
+    WorkerExecutionPoolRegistry,
 )
 
 
@@ -106,3 +113,88 @@ def test_subprocess_invalid_json_is_normalized(monkeypatch: pytest.MonkeyPatch, 
 
     assert exc_info.value.reason_code == "worker.subprocess_invalid_json"
     assert "secret" not in exc_info.value.error_message
+
+
+def test_subprocess_inflight_cancel_terminates_child(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    captured: dict[str, Any] = {}
+    checks = iter([False, False, True])
+
+    class FakeProcess:
+        pid = 4242
+
+        def poll(self) -> int | None:
+            return None
+
+        def communicate(self, *_args: Any, **_kwargs: Any) -> tuple[str, str]:
+            raise subprocess.TimeoutExpired(cmd=["python"], timeout=0.05)
+
+    def fake_popen(command: list[str], **kwargs: Any) -> FakeProcess:
+        captured["command"] = command
+        captured["kwargs"] = kwargs
+        return FakeProcess()
+
+    def fake_terminate(process: FakeProcess, *, kill_grace_seconds: int | float) -> None:
+        captured["terminated_pid"] = process.pid
+        captured["kill_grace_seconds"] = kill_grace_seconds
+
+    monkeypatch.setattr(subprocess, "Popen", fake_popen)
+    monkeypatch.setattr(
+        "video_editing_toolkit.agentctl_worker_runner._terminate_process_tree",
+        fake_terminate,
+    )
+
+    with pytest.raises(WorkerLocalExecutionCancelled) as exc_info:
+        run_local_agentctl(
+            {
+                "toolkit_id": "video-editing-toolkit",
+                "capability": "video.project_edit.create_project",
+                "input": {"project_id": "proj_cancel"},
+            },
+            artifact_root=tmp_path / "artifacts",
+            execution_mode="subprocess",
+            timeout_seconds=10,
+            cancellation_checker=lambda: next(checks),
+            cancellation_check_interval_seconds=0.05,
+            process_kill_grace_seconds=0.25,
+        )
+
+    assert exc_info.value.reason_code == "worker.execution_cancelled"
+    assert captured["terminated_pid"] == 4242
+    assert captured["kill_grace_seconds"] == 0.25
+    assert "proj_cancel" not in " ".join(captured["command"])
+    assert captured["kwargs"]["stdout"] is subprocess.PIPE
+    assert captured["kwargs"]["stderr"] is subprocess.PIPE
+
+
+def test_managed_pool_unavailable_error_includes_safe_probe(tmp_path: Path) -> None:
+    registry = WorkerExecutionPoolRegistry(
+        {
+            DOCKER_EXECUTION_BACKEND: WorkerExecutionPoolConfig(
+                backend=DOCKER_EXECUTION_BACKEND,
+                enabled=False,
+                endpoint="https://docker.internal/private",
+            ),
+        }
+    )
+
+    with pytest.raises(WorkerExecutionBackendUnavailable) as exc_info:
+        run_local_agentctl(
+            {
+                "toolkit_id": "video-editing-toolkit",
+                "capability": "video.project_edit.create_project",
+                "input": {"project_id": "proj_docker"},
+            },
+            artifact_root=tmp_path / "artifacts",
+            execution_mode=DOCKER_EXECUTION_BACKEND,
+            timeout_seconds=10,
+            execution_pool_registry=registry,
+        )
+
+    assert exc_info.value.reason_code == "worker.execution_backend_unavailable"
+    probe = exc_info.value.probe.to_public_dict()
+    assert probe["backend"] == DOCKER_EXECUTION_BACKEND
+    assert probe["available"] is False
+    assert "docker.internal" not in str(probe)

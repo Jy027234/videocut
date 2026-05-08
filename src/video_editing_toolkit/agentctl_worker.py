@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import inspect
 import json
 import os
 import re
@@ -29,6 +30,7 @@ from video_editing_toolkit.agentctl_worker_runner import (
     IN_PROCESS_EXECUTION_MODE,
     SUPPORTED_EXECUTION_BACKENDS,
     WorkerExecutionBackendUnavailable,
+    WorkerLocalExecutionCancelled,
     WorkerLocalExecutionError,
     WorkerLocalExecutionTimeout,
     run_local_agentctl,
@@ -43,6 +45,7 @@ from video_editing_toolkit.storage.materialize import (
     DEFAULT_MAX_ARTIFACT_BYTES,
     ArtifactBytesFetcher,
 )
+from video_editing_toolkit.worker_pool import WORKER_POOL_CONTRACT, WorkerExecutionPoolRegistry
 
 
 SCHEMA = "video_editing_toolkit.agentctl_worker.run.v0"
@@ -104,6 +107,8 @@ class VideoToolkitWorkerConfig:
     max_run_timeout_seconds: int = 120
     execution_mode: str = IN_PROCESS_EXECUTION_MODE
     max_attempts: int = 1
+    cancellation_check_interval_seconds: float = 0.25
+    process_kill_grace_seconds: float = 2.0
 
     @classmethod
     def from_env(
@@ -128,6 +133,8 @@ class VideoToolkitWorkerConfig:
         max_run_timeout_seconds: int | None = None,
         execution_mode: str | None = None,
         max_attempts: int | None = None,
+        cancellation_check_interval_seconds: float | None = None,
+        process_kill_grace_seconds: float | None = None,
     ) -> "VideoToolkitWorkerConfig":
         selected_base_url = (
             base_url
@@ -196,6 +203,12 @@ class VideoToolkitWorkerConfig:
             max_attempts=max_attempts
             if max_attempts is not None
             else _int_env("VIDEO_TOOLKIT_MAX_ATTEMPTS", 1),
+            cancellation_check_interval_seconds=cancellation_check_interval_seconds
+            if cancellation_check_interval_seconds is not None
+            else _float_env("VIDEO_TOOLKIT_CANCELLATION_CHECK_INTERVAL_SECONDS", 0.25),
+            process_kill_grace_seconds=process_kill_grace_seconds
+            if process_kill_grace_seconds is not None
+            else _float_env("VIDEO_TOOLKIT_PROCESS_KILL_GRACE_SECONDS", 2.0),
         )
 
     def remote_config(self) -> AgentctlRemoteConfig:
@@ -230,11 +243,17 @@ class VideoToolkitAgentctlWorker:
         client: AgentctlRemoteClient | None = None,
         artifact_fetcher: ArtifactBytesFetcher | None = None,
         local_runner: Any | None = None,
+        cancellation_checker: Any | None = None,
+        cancel_event: Any | None = None,
+        execution_pool_registry: WorkerExecutionPoolRegistry | None = None,
     ) -> None:
         self.config = config
         self.client = client or AgentctlRemoteClient(config.remote_config())
         self.artifact_fetcher = artifact_fetcher
         self.local_runner = local_runner or run_local_agentctl
+        self.cancellation_checker = cancellation_checker
+        self.cancel_event = cancel_event
+        self.execution_pool_registry = execution_pool_registry or WorkerExecutionPoolRegistry.from_env()
 
     def run_once(self, *, expected_job_id: str | None = None) -> dict[str, Any]:
         heartbeat = self.heartbeat()
@@ -337,6 +356,9 @@ class VideoToolkitAgentctlWorker:
         )
 
     def heartbeat(self) -> dict[str, Any]:
+        execution_pool_probe = self.execution_pool_registry.probe(
+            self.config.execution_mode,
+        ).to_public_dict()
         return self.client.post(
             "/runtime/backends/workers/heartbeat",
             {
@@ -356,6 +378,8 @@ class VideoToolkitAgentctlWorker:
                     "max_run_timeout_seconds": self.config.max_run_timeout_seconds,
                     "execution_mode": self.config.execution_mode,
                     "execution_backend": self.config.execution_mode,
+                    "execution_pool_contract": WORKER_POOL_CONTRACT,
+                    "execution_pool": execution_pool_probe,
                     "supported_execution_backends": sorted(SUPPORTED_EXECUTION_BACKENDS),
                     "worker_lifecycle_contract": WORKER_LIFECYCLE_CONTRACT,
                     "max_attempts": self.config.max_attempts,
@@ -363,7 +387,8 @@ class VideoToolkitAgentctlWorker:
                         "mode": "attempt_preflight_only",
                         "max_attempts": self.config.max_attempts,
                     },
-                    "cancel_contract": "pre_execution_cancel_requested_only",
+                    "cancel_contract": "pre_execution_and_subprocess_in_flight_cancel_or_kill",
+                    "process_kill_contract": "terminate_then_kill_child_or_process_group",
                 },
             },
         )
@@ -383,7 +408,7 @@ class VideoToolkitAgentctlWorker:
         attempt = _job_attempt(job)
         trace_ref = _trace_ref_from_job(job)
         try:
-            if _job_cancel_requested(job):
+            if self._runtime_cancel_requested(job):
                 return _worker_error_result(
                     status="failed",
                     execution_mode=self.config.execution_mode,
@@ -425,7 +450,21 @@ class VideoToolkitAgentctlWorker:
                 config=self.config.materialization_config(),
                 fetch_bytes=self.artifact_fetcher,
             )
-            local_result = self.local_runner(
+            if self._runtime_cancel_requested(job):
+                return _worker_error_result(
+                    status="failed",
+                    execution_mode=self.config.execution_mode,
+                    error_code="video_toolkit_worker.execution_cancelled",
+                    error_message="Worker skipped local execution because cancellation was requested.",
+                    reason_code="worker.cancel_requested",
+                    started=started,
+                    attempt=attempt,
+                    max_attempts=self.config.max_attempts,
+                    trace_ref=trace_ref,
+                    extra_output={"cancelled": True},
+                )
+            local_result = _invoke_local_runner(
+                self.local_runner,
                 envelope,
                 artifact_root=self.config.artifact_root,
                 execution_mode=self.config.execution_mode,
@@ -433,6 +472,11 @@ class VideoToolkitAgentctlWorker:
                     policy.route_timeout_seconds,
                     self.config,
                 ),
+                cancellation_checker=self._runtime_cancellation_checker(job),
+                cancel_event=self.cancel_event,
+                cancellation_check_interval_seconds=self.config.cancellation_check_interval_seconds,
+                process_kill_grace_seconds=self.config.process_kill_grace_seconds,
+                execution_pool_registry=self.execution_pool_registry,
             )
             status = "completed" if local_result.get("ok") is True else "failed"
             trace_ref = _trace_ref_from_agentctl_result(local_result) or trace_ref
@@ -473,6 +517,19 @@ class VideoToolkitAgentctlWorker:
                     "resource_class": exc.resource_class,
                 },
             )
+        except WorkerLocalExecutionCancelled as exc:
+            return _worker_error_result(
+                status="failed",
+                execution_mode=self.config.execution_mode,
+                error_code="video_toolkit_worker.execution_cancelled",
+                error_message=exc.error_message,
+                reason_code=exc.reason_code,
+                started=started,
+                attempt=attempt,
+                max_attempts=self.config.max_attempts,
+                trace_ref=trace_ref,
+                extra_output={"cancelled": True},
+            )
         except WorkerLocalExecutionTimeout as exc:
             return _worker_error_result(
                 status="failed",
@@ -486,6 +543,12 @@ class VideoToolkitAgentctlWorker:
                 trace_ref=trace_ref,
             )
         except WorkerExecutionBackendUnavailable as exc:
+            extra_output: dict[str, Any] = {
+                "execution_backend": getattr(exc, "execution_backend", self.config.execution_mode)
+            }
+            probe = getattr(exc, "probe", None)
+            if probe is not None:
+                extra_output["execution_pool_probe"] = probe.to_public_dict()
             return _worker_error_result(
                 status="failed",
                 execution_mode=self.config.execution_mode,
@@ -496,7 +559,7 @@ class VideoToolkitAgentctlWorker:
                 attempt=attempt,
                 max_attempts=self.config.max_attempts,
                 trace_ref=trace_ref,
-                extra_output={"execution_backend": getattr(exc, "execution_backend", self.config.execution_mode)},
+                extra_output=extra_output,
             )
         except WorkerLocalExecutionError as exc:
             return _worker_error_result(
@@ -570,6 +633,20 @@ class VideoToolkitAgentctlWorker:
             _caller_safe(body, token=self.config.token, extra_tokens=(self.config.artifact_token,)),
         )
 
+    def _runtime_cancel_requested(self, job: Mapping[str, Any]) -> bool:
+        if _job_cancel_requested(job):
+            return True
+        if self.cancel_event is not None:
+            is_set = getattr(self.cancel_event, "is_set", None)
+            if callable(is_set) and is_set():
+                return True
+        if self.cancellation_checker is None:
+            return False
+        return bool(self.cancellation_checker(job))
+
+    def _runtime_cancellation_checker(self, job: Mapping[str, Any]) -> Any:
+        return lambda: self._runtime_cancel_requested(job)
+
 
 def toolkit_envelope_from_job(
     job: Mapping[str, Any],
@@ -633,6 +710,47 @@ def runtime_job_id_from_enqueue(value: Any) -> str | None:
     return None
 
 
+def _invoke_local_runner(
+    local_runner: Any,
+    envelope: Mapping[str, Any],
+    *,
+    artifact_root: Path,
+    execution_mode: str,
+    timeout_seconds: int | float,
+    cancellation_checker: Any,
+    cancel_event: Any | None,
+    cancellation_check_interval_seconds: float,
+    process_kill_grace_seconds: float,
+    execution_pool_registry: WorkerExecutionPoolRegistry,
+) -> dict[str, Any]:
+    kwargs: dict[str, Any] = {
+        "artifact_root": artifact_root,
+        "execution_mode": execution_mode,
+        "timeout_seconds": timeout_seconds,
+    }
+    optional_kwargs = {
+        "cancellation_checker": cancellation_checker,
+        "cancel_event": cancel_event,
+        "cancellation_check_interval_seconds": cancellation_check_interval_seconds,
+        "process_kill_grace_seconds": process_kill_grace_seconds,
+        "execution_pool_registry": execution_pool_registry,
+    }
+    for key, value in optional_kwargs.items():
+        if _runner_accepts_keyword(local_runner, key):
+            kwargs[key] = value
+    return local_runner(envelope, **kwargs)
+
+
+def _runner_accepts_keyword(local_runner: Any, keyword: str) -> bool:
+    try:
+        signature = inspect.signature(local_runner)
+    except (TypeError, ValueError):
+        return True
+    if any(parameter.kind == inspect.Parameter.VAR_KEYWORD for parameter in signature.parameters.values()):
+        return True
+    return keyword in signature.parameters
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description="Run the video editing toolkit as an external agentctl runtime worker.",
@@ -674,6 +792,16 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--lease-seconds", type=int, help="Job lease duration.")
     parser.add_argument("--timeout-seconds", type=float, help="HTTP timeout.")
     parser.add_argument("--idle-sleep-seconds", type=float, help="Loop idle sleep.")
+    parser.add_argument(
+        "--cancellation-check-interval-seconds",
+        type=float,
+        help="Polling interval for in-flight subprocess cancellation checks.",
+    )
+    parser.add_argument(
+        "--process-kill-grace-seconds",
+        type=float,
+        help="Grace period before hard-killing a cancelled subprocess.",
+    )
     parser.add_argument("--once", action="store_true", help="Run one heartbeat/lease/complete cycle.")
     parser.add_argument("--max-jobs", type=int, help="Run until this many jobs are processed, then stop.")
     parser.add_argument("--enqueue-probe", action="store_true", help="Enqueue a no-upload RunSpec probe before running.")
@@ -704,6 +832,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         max_run_timeout_seconds=args.max_run_timeout_seconds,
         execution_mode=args.execution_backend or args.execution_mode,
         max_attempts=args.max_attempts,
+        cancellation_check_interval_seconds=args.cancellation_check_interval_seconds,
+        process_kill_grace_seconds=args.process_kill_grace_seconds,
     )
     worker = VideoToolkitAgentctlWorker(config)
     enqueued: dict[str, Any] | None = None
