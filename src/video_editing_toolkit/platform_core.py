@@ -22,6 +22,7 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import quote, urljoin
 from urllib.request import Request, urlopen as default_urlopen
 
+from video_editing_toolkit.adapters.qc import GENERATE_MEDIA_INSPECTION_EVIDENCE
 from video_editing_toolkit.agentctl_remote import (
     build_runspec_enqueue_payload,
     build_tool_catalog_registration_payload,
@@ -790,6 +791,129 @@ def build_platform_core_local_loop_rehearsal_package(
     return _caller_safe(package)
 
 
+def build_platform_core_p1_qc_smoke_rehearsal(
+    smoke_payload: Mapping[str, Any],
+    manifest_path: str | Path = DEFAULT_P1_MANIFEST_PATH,
+    *,
+    tenant_id: str = "platform_review",
+) -> dict[str, Any]:
+    """Wrap a local P1 QC smoke result as a no-mutation Platform Core rehearsal."""
+
+    manifest_path = Path(manifest_path)
+    manifest = _load_manifest(manifest_path)
+    smoke_summary, agentctl_response = _p1_qc_smoke_parts(smoke_payload)
+    source_ref = _p1_qc_smoke_source_ref(smoke_summary, agentctl_response)
+    frame_limit = _p1_qc_smoke_frame_limit(smoke_summary)
+    request = {
+        "platform_run_id": "platform_run_p1_13_qc_smoke_rehearsal",
+        "platform_tool_call_id": "platform_tool_call_p1_13_qc_smoke_rehearsal",
+        "platform_trace_id": "trace_p1_13_qc_smoke_rehearsal",
+        "toolkit_id": TOOLKIT_ID,
+        "capability": GENERATE_MEDIA_INSPECTION_EVIDENCE,
+        "version": "0.1.0",
+        "tenant_id": tenant_id,
+        "user_id": "platform_core_qc_smoke_rehearsal",
+        "input": _compact_dict(
+            {
+                "project_id": "proj_p1_qc_smoke_rehearsal",
+                "artifact_ref": source_ref,
+                "frame_limit": frame_limit,
+            }
+        ),
+        "artifact_refs": [source_ref] if source_ref else [],
+        "policy_context": {
+            "tenant_id": tenant_id,
+            "user_id": "platform_core_qc_smoke_rehearsal",
+            "data_policy": {
+                "artifact_contract": "artifact_ref_only",
+                "allow_p1_qc_media_inspection_execution": True,
+            },
+            "quota_policy": {"profile": "p1_13_qc_smoke_rehearsal"},
+        },
+    }
+    completion_source = agentctl_response or _agentctl_response_from_qc_smoke_summary(smoke_summary)
+    completion_preview = _remove_download_urls(
+        build_platform_core_completion(completion_source, request=request)
+    )
+    audit_event_preview = build_platform_core_learning_audit_event(
+        {
+            "request": request,
+            "completion": completion_preview,
+        }
+    )
+    capability_entry = _manifest_capability_entry(manifest, GENERATE_MEDIA_INSPECTION_EVIDENCE)
+    smoke_evidence_summary = _mapping_or_empty(
+        _mapping_or_empty(smoke_summary.get("evidence")).get("summary")
+    )
+    rehearsal = {
+        "schema": SCHEMA,
+        "contract": "platform_core_p1_qc_smoke_rehearsal.v0",
+        "toolkit_id": manifest.get("toolkit_id", TOOLKIT_ID),
+        "version": manifest.get("version"),
+        "status": _p1_qc_smoke_rehearsal_status(smoke_summary),
+        "tenant_id": tenant_id,
+        "dry_run": True,
+        "network_mutation": False,
+        "execution_performed": False,
+        "platform_core_repository_mutation": False,
+        "local_artifact_mutation": False,
+        "source_manifest": {
+            "path": _repo_relative_path(manifest_path),
+            "sha256": _file_sha256(manifest_path),
+        },
+        "p1_capability_posture": {
+            "capability": GENERATE_MEDIA_INSPECTION_EVIDENCE,
+            "manifest_status": _optional_string(capability_entry.get("status")) or "unknown",
+            "default_route_table": "p0_only",
+            "experimental_route_table": "explicit_allowlist_only",
+            "platform_core_enablement": False,
+            "request_policy_opt_in_required": True,
+        },
+        "qc_smoke_summary": {
+            "schema": smoke_summary.get("schema"),
+            "ok": smoke_summary.get("ok") is True,
+            "status": smoke_summary.get("status"),
+            "evidence_summary": dict(smoke_evidence_summary),
+            "inspection_results": _p1_qc_smoke_inspection_results(smoke_summary),
+            "output_artifact_count": _p1_qc_smoke_output_artifact_count(smoke_summary),
+        },
+        "handoff_sequence": [
+            "p1_qc_smoke_result_review",
+            "platform_core_request_normalization",
+            "agentctl_envelope_preview",
+            "platform_core_completion_normalization",
+            "learning_audit_metadata_preview",
+        ],
+        "manifest_registration_dry_run": build_platform_core_manifest_registration_dry_run(
+            manifest_path,
+            tenant_id=tenant_id,
+        ),
+        "platform_core_request": request,
+        "agentctl_envelope": platform_core_envelope_to_agentctl(request),
+        "completion_preview": completion_preview,
+        "audit_event_preview": audit_event_preview,
+        "quality_gate": {
+            "status": _p1_qc_smoke_quality_gate_status(smoke_summary),
+            "requires_manual_review": _p1_qc_smoke_quality_gate_status(smoke_summary) != "passed",
+            "required_checks": [
+                "media_probe",
+                "audio_quality",
+                "visual_quality",
+            ],
+            "source": "local_p1_qc_smoke_result",
+        },
+        "remaining_platform_core_gates": [
+            "product_adapter_onboarding_approval",
+            "tenant_rollout_allowlist",
+            "tool_catalog_enablement_action",
+            "artifact_byte_endpoint_cloud_authorization",
+            "learning_audit_ingestion_policy",
+            "release_center_publish_or_rollback_policy",
+        ],
+    }
+    return _caller_safe(rehearsal)
+
+
 def build_platform_core_release_dossier(
     manifest_path: str | Path = DEFAULT_P1_MANIFEST_PATH,
     *,
@@ -1002,6 +1126,162 @@ def _completion_artifact_lifecycle_summary(
     return {}
 
 
+def _p1_qc_smoke_parts(payload: Mapping[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
+    smoke_summary = _mapping_or_empty(payload.get("smoke_summary"))
+    agentctl_response = _mapping_or_empty(payload.get("agentctl_response"))
+    if smoke_summary:
+        return smoke_summary, agentctl_response
+    return dict(payload), agentctl_response
+
+
+def _p1_qc_smoke_source_ref(
+    smoke_summary: Mapping[str, Any],
+    agentctl_response: Mapping[str, Any],
+) -> dict[str, Any]:
+    source_ref = _mapping_or_empty(_mapping_or_empty(smoke_summary.get("input")).get("artifact_ref"))
+    if source_ref:
+        return _artifact_ref_without_download_url(source_ref)
+
+    processed = _mapping_or_empty(agentctl_response.get("processed"))
+    output = _mapping_or_empty(processed.get("output"))
+    evidence = _mapping_or_empty(output.get("media_inspection_evidence"))
+    source_refs = evidence.get("source_artifact_refs")
+    if isinstance(source_refs, list) and source_refs and isinstance(source_refs[0], Mapping):
+        return _artifact_ref_without_download_url(source_refs[0])
+    return {}
+
+
+def _p1_qc_smoke_frame_limit(smoke_summary: Mapping[str, Any]) -> int | None:
+    value = _mapping_or_empty(smoke_summary.get("input")).get("frame_limit")
+    if isinstance(value, int) and not isinstance(value, bool) and value > 0:
+        return value
+    return None
+
+
+def _p1_qc_smoke_output_artifact_count(smoke_summary: Mapping[str, Any]) -> int:
+    value = _mapping_or_empty(smoke_summary.get("artifacts")).get("output_artifact_count")
+    if isinstance(value, int) and value >= 0:
+        return value
+    return 0
+
+
+def _p1_qc_smoke_inspection_results(smoke_summary: Mapping[str, Any]) -> list[dict[str, Any]]:
+    raw_results = _mapping_or_empty(smoke_summary.get("evidence")).get("inspection_results")
+    if not isinstance(raw_results, list):
+        return []
+    results: list[dict[str, Any]] = []
+    for item in raw_results:
+        if not isinstance(item, Mapping):
+            continue
+        results.append(
+            _compact_dict(
+                {
+                    "check_id": item.get("check_id"),
+                    "status": item.get("status"),
+                    "severity": item.get("severity"),
+                    "message": item.get("message"),
+                }
+            )
+        )
+    return results
+
+
+def _p1_qc_smoke_quality_gate_status(smoke_summary: Mapping[str, Any]) -> str:
+    evidence_summary = _mapping_or_empty(_mapping_or_empty(smoke_summary.get("evidence")).get("summary"))
+    required = {"media_probe", "audio_quality", "visual_quality"}
+    passed = {
+        str(item.get("check_id"))
+        for item in _p1_qc_smoke_inspection_results(smoke_summary)
+        if item.get("status") == "passed"
+    }
+    if (
+        smoke_summary.get("ok") is True
+        and evidence_summary.get("status") == "ready"
+        and required.issubset(passed)
+    ):
+        return "passed"
+    return "needs_review"
+
+
+def _p1_qc_smoke_rehearsal_status(smoke_summary: Mapping[str, Any]) -> str:
+    if _p1_qc_smoke_quality_gate_status(smoke_summary) == "passed":
+        return "ready_for_platform_review"
+    return "needs_review"
+
+
+def _agentctl_response_from_qc_smoke_summary(smoke_summary: Mapping[str, Any]) -> dict[str, Any]:
+    evidence = _mapping_or_empty(smoke_summary.get("evidence"))
+    artifacts = _mapping_or_empty(smoke_summary.get("artifacts"))
+    evidence_ref = _artifact_ref_without_download_url(
+        _mapping_or_empty(artifacts.get("qc_media_inspection_evidence_artifact_ref"))
+    )
+    artifact_refs = [evidence_ref] if evidence_ref else []
+    return {
+        "schema": "video_editing_toolkit.agentctl.local_run.v0",
+        "toolkit_id": TOOLKIT_ID,
+        "capability": GENERATE_MEDIA_INSPECTION_EVIDENCE,
+        "ok": smoke_summary.get("ok") is True,
+        "processed": {
+            "run_id": "platform_run_p1_13_qc_smoke_rehearsal",
+            "tool_call_id": "platform_tool_call_p1_13_qc_smoke_rehearsal",
+            "trace_ref": "trace_p1_13_qc_smoke_rehearsal",
+            "status": smoke_summary.get("status") if isinstance(smoke_summary.get("status"), str) else "failed",
+            "output": {
+                "media_inspection_evidence": {
+                    "summary": _mapping_or_empty(evidence.get("summary")),
+                    "inspection_results": _p1_qc_smoke_inspection_results(smoke_summary),
+                    "warnings": evidence.get("warnings") if isinstance(evidence.get("warnings"), list) else [],
+                },
+                "qc_media_inspection_evidence_artifact_ref": evidence_ref,
+            },
+            "artifact_refs": artifact_refs,
+            "usage_metrics": {},
+            "error_code": _optional_string(smoke_summary.get("error_code")),
+            "error_message": _optional_string(smoke_summary.get("error_message")),
+        },
+    }
+
+
+def _manifest_capability_entry(manifest: Mapping[str, Any], capability: str) -> dict[str, Any]:
+    capabilities = manifest.get("capabilities")
+    if not isinstance(capabilities, list):
+        return {}
+    for item in capabilities:
+        if isinstance(item, Mapping) and item.get("capability") == capability:
+            return dict(item)
+    return {}
+
+
+def _artifact_ref_without_download_url(value: Mapping[str, Any]) -> dict[str, Any]:
+    return {
+        key: child
+        for key, child in _caller_safe(dict(value)).items()
+        if key != "download_url" and child is not None
+    }
+
+
+def _remove_download_urls(value: Any) -> Any:
+    if isinstance(value, Mapping):
+        return {
+            str(key): _remove_download_urls(child)
+            for key, child in value.items()
+            if str(key) != "download_url"
+        }
+    if isinstance(value, list):
+        return [_remove_download_urls(child) for child in value]
+    if isinstance(value, tuple):
+        return [_remove_download_urls(child) for child in value]
+    return value
+
+
+def _compact_dict(value: Mapping[str, Any]) -> dict[str, Any]:
+    return {
+        str(key): child
+        for key, child in value.items()
+        if child is not None and child != {} and child != []
+    }
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description="Build local Platform Core handoff payloads for the video editing toolkit.",
@@ -1024,6 +1304,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--loop-tenant-id", default="platform_review", help="Tenant id for --local-loop-package.")
     parser.add_argument("--loop-capability", default="video.project_edit.create_project", help="Capability used in --local-loop-package.")
     parser.add_argument("--loop-input-json", help="Input object used in --local-loop-package.")
+    parser.add_argument("--p1-qc-smoke-rehearsal-json", help="P1 QC smoke result JSON used to build a no-mutation Platform Core rehearsal.")
+    parser.add_argument("--p1-qc-smoke-manifest", default=str(DEFAULT_P1_MANIFEST_PATH), help="Manifest used for --p1-qc-smoke-rehearsal-json.")
+    parser.add_argument("--p1-qc-smoke-tenant-id", default="platform_review", help="Tenant id for --p1-qc-smoke-rehearsal-json.")
     parser.add_argument("--artifact-ref-json", action="append", default=[], help="Caller-safe artifact_ref object used in --local-loop-package.")
     parser.add_argument("--input-json", help="Platform Core run request to normalize. Defaults to stdin.")
     parser.add_argument("--completion-json", help="Local result JSON to normalize as a Platform Core completion.")
@@ -1099,6 +1382,12 @@ def main(argv: Sequence[str] | None = None) -> int:
                 _load_json_text(raw_ref)
                 for raw_ref in args.artifact_ref_json
             ],
+        )
+    elif args.p1_qc_smoke_rehearsal_json:
+        payload = build_platform_core_p1_qc_smoke_rehearsal(
+            _load_json_file(args.p1_qc_smoke_rehearsal_json),
+            args.p1_qc_smoke_manifest,
+            tenant_id=args.p1_qc_smoke_tenant_id,
         )
     elif args.onboarding_bundle:
         payload = build_platform_core_onboarding_bundle(
@@ -1356,6 +1645,13 @@ def _load_json_text(raw: str) -> dict[str, Any]:
     payload = json.loads(raw)
     if not isinstance(payload, dict):
         raise ValueError("JSON payload must be an object.")
+    return payload
+
+
+def _load_json_file(path: str | Path) -> dict[str, Any]:
+    payload = json.loads(Path(path).read_text(encoding="utf-8"))
+    if not isinstance(payload, dict):
+        raise ValueError("JSON file must contain an object.")
     return payload
 
 

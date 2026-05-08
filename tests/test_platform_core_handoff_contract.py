@@ -16,6 +16,7 @@ from video_editing_toolkit.platform_core import (
     build_platform_core_local_loop_rehearsal_package,
     build_platform_core_manifest_registration_dry_run,
     build_platform_core_onboarding_bundle,
+    build_platform_core_p1_qc_smoke_rehearsal,
     build_platform_core_release_dossier,
     build_platform_core_toolkit_descriptor,
     platform_core_envelope_to_agentctl,
@@ -254,6 +255,86 @@ def test_platform_core_local_loop_rehearsal_package_is_no_mutation_and_caller_sa
     assert "secret-token" not in rendered
     assert "storage_uri" not in rendered
     assert_no_public_path_or_command_leak(package)
+
+
+def test_platform_core_p1_qc_smoke_rehearsal_wraps_result_without_mutation() -> None:
+    smoke_result = _p1_qc_smoke_result_payload()
+
+    rehearsal = build_platform_core_p1_qc_smoke_rehearsal(
+        smoke_result,
+        tenant_id="tenant_qc_smoke_review",
+    )
+    rendered = json.dumps(rehearsal, sort_keys=True)
+
+    assert rehearsal["contract"] == "platform_core_p1_qc_smoke_rehearsal.v0"
+    assert rehearsal["status"] == "ready_for_platform_review"
+    assert rehearsal["tenant_id"] == "tenant_qc_smoke_review"
+    assert rehearsal["dry_run"] is True
+    assert rehearsal["network_mutation"] is False
+    assert rehearsal["execution_performed"] is False
+    assert rehearsal["platform_core_repository_mutation"] is False
+    assert rehearsal["local_artifact_mutation"] is False
+    assert rehearsal["p1_capability_posture"]["capability"] == "video.qc.generate_media_inspection_evidence"
+    assert rehearsal["p1_capability_posture"]["manifest_status"] == "disabled"
+    assert rehearsal["p1_capability_posture"]["platform_core_enablement"] is False
+    assert rehearsal["p1_capability_posture"]["request_policy_opt_in_required"] is True
+    assert rehearsal["qc_smoke_summary"]["ok"] is True
+    assert rehearsal["qc_smoke_summary"]["evidence_summary"]["status"] == "ready"
+    assert rehearsal["quality_gate"]["status"] == "passed"
+    assert rehearsal["quality_gate"]["requires_manual_review"] is False
+    assert rehearsal["manifest_registration_dry_run"]["network_mutation"] is False
+    assert rehearsal["platform_core_request"]["capability"] == "video.qc.generate_media_inspection_evidence"
+    assert (
+        rehearsal["platform_core_request"]["policy_context"]["data_policy"][
+            "allow_p1_qc_media_inspection_execution"
+        ]
+        is True
+    )
+    assert rehearsal["agentctl_envelope"]["policy_context"]["data_policy"][
+        "allow_p1_qc_media_inspection_execution"
+    ] is True
+    assert rehearsal["completion_preview"]["contract"] == "platform_core_toolkit_run_completion.v0"
+    assert rehearsal["completion_preview"]["status"] == "succeeded"
+    assert rehearsal["completion_preview"]["artifact_refs"][0]["artifact_id"] == "artifact_qc_evidence"
+    assert rehearsal["audit_event_preview"]["contract"] == "platform_core_learning_audit_event.v0"
+    assert rehearsal["audit_event_preview"]["data_minimization"]["raw_media_logged"] is False
+    assert "secret-token" not in rendered
+    assert "storage_uri" not in rendered
+    assert "download_url" not in rendered
+    assert_no_public_path_or_command_leak(rehearsal)
+
+
+def test_platform_core_cli_p1_qc_smoke_rehearsal_outputs_json(tmp_path: Path) -> None:
+    smoke_path = tmp_path / "p1-qc-smoke-result.json"
+    smoke_path.write_text(
+        json.dumps(_p1_qc_smoke_result_payload(), ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "video_editing_toolkit.platform_core",
+            "--p1-qc-smoke-rehearsal-json",
+            str(smoke_path),
+            "--p1-qc-smoke-tenant-id",
+            "tenant_cli_qc_smoke",
+        ],
+        text=True,
+        capture_output=True,
+        check=False,
+        env={**os.environ, "PYTHONPATH": str(Path(__file__).resolve().parents[1] / "src")},
+    )
+
+    assert completed.returncode == 0
+    payload = json.loads(completed.stdout)
+    assert payload["contract"] == "platform_core_p1_qc_smoke_rehearsal.v0"
+    assert payload["tenant_id"] == "tenant_cli_qc_smoke"
+    assert payload["network_mutation"] is False
+    assert payload["quality_gate"]["status"] == "passed"
+    assert str(smoke_path) not in completed.stdout
+    assert_no_public_path_or_command_leak(payload)
 
 
 def test_platform_core_request_normalizes_to_agentctl_envelope_without_storage_internals(
@@ -536,3 +617,84 @@ def test_platform_core_cli_local_loop_package_outputs_json() -> None:
     assert payload["tenant_id"] == "tenant_cli_loop"
     assert payload["execution_performed"] is False
     assert_no_public_path_or_command_leak(payload)
+
+
+def _p1_qc_smoke_result_payload() -> dict[str, object]:
+    source_ref = {
+        "artifact_id": "artifact_source_video",
+        "artifact_type": "source_video",
+        "mime_type": "video/mp4",
+        "size_bytes": 123456,
+        "checksum": "sha256:" + "a" * 64,
+        "data_class": "sensitive",
+        "retention_policy": "short_lived",
+        "download_url": "/local/artifacts/artifact_source_video?token=secret-token",
+        "storage_uri": "s3://private/source.mp4",
+    }
+    evidence_ref = {
+        "artifact_id": "artifact_qc_evidence",
+        "artifact_type": "qc_media_inspection_evidence_json",
+        "mime_type": "application/json",
+        "size_bytes": 999,
+        "checksum": "sha256:" + "b" * 64,
+        "data_class": "sensitive",
+        "retention_policy": "short_lived",
+        "download_url": "/local/artifacts/artifact_qc_evidence?token=secret-token",
+    }
+    summary = {
+        "schema": "video_editing_toolkit.p1_qc_evidence_smoke.v0",
+        "ok": True,
+        "capability": "video.qc.generate_media_inspection_evidence",
+        "status": "succeeded",
+        "input": {"artifact_ref": source_ref, "frame_limit": 5},
+        "p1_controls": {
+            "allowed_p1_capabilities": ["video.qc.generate_media_inspection_evidence"],
+            "policy_opt_in": True,
+        },
+        "evidence": {
+            "summary": {
+                "status": "ready",
+                "execution_enabled": True,
+                "source_artifact_count": 1,
+                "inspection_result_count": 3,
+                "evidence_item_count": 3,
+                "warning_count": 0,
+            },
+            "inspection_results": [
+                {"check_id": "media_probe", "status": "passed", "severity": "pass"},
+                {"check_id": "audio_quality", "status": "passed", "severity": "pass"},
+                {"check_id": "visual_quality", "status": "passed", "severity": "pass"},
+            ],
+            "warnings": [],
+        },
+        "artifacts": {
+            "qc_media_inspection_evidence_artifact_ref": evidence_ref,
+            "output_artifact_count": 1,
+        },
+    }
+    return {
+        "schema": "video_editing_toolkit.p1_qc_evidence_smoke_result.v0",
+        "smoke_summary": summary,
+        "agentctl_response": {
+            "schema": "video_editing_toolkit.agentctl.local_run.v0",
+            "toolkit_id": "video-editing-toolkit",
+            "capability": "video.qc.generate_media_inspection_evidence",
+            "ok": True,
+            "processed": {
+                "run_id": "run_qc_smoke",
+                "tool_call_id": "tool_call_qc_smoke",
+                "trace_ref": "trace_qc_smoke",
+                "status": "succeeded",
+                "output": {
+                    "media_inspection_evidence": {
+                        "summary": summary["evidence"]["summary"],
+                        "inspection_results": summary["evidence"]["inspection_results"],
+                        "warnings": [],
+                    },
+                    "qc_media_inspection_evidence_artifact_ref": evidence_ref,
+                },
+                "artifact_refs": [evidence_ref],
+                "usage_metrics": {"operation": "generate_media_inspection_evidence"},
+            },
+        },
+    }

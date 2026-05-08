@@ -228,6 +228,7 @@ local loop runner preview:
 ```powershell
 py -m video_editing_toolkit.platform_core --manifest-registration-dry-run
 py -m video_editing_toolkit.platform_core --local-loop-package
+py -m video_editing_toolkit.platform_core --p1-qc-smoke-rehearsal-json D:\app\video\素材1\p1_12_qc_smoke_result.json
 py -m video_editing_toolkit.platform_core_loop
 ```
 
@@ -235,6 +236,9 @@ These payloads preserve P1 disabled capability status and preview the future
 Platform Core + agentctl + external worker loop without registering tools,
 enqueueing jobs, downloading artifacts, publishing releases, or modifying the
 Platform Core repository.
+
+The QC smoke rehearsal command wraps an existing local P1 QC smoke result into a
+Platform Core review packet. It does not rerun analysis or call Platform Core.
 
 Only the explicit runner opt-in performs local enqueue/lease/complete calls:
 

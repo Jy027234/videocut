@@ -16,10 +16,13 @@ from video_editing_toolkit.adapters.audio_quality import AudioQualityAdapter
 from video_editing_toolkit.adapters.base import AdapterResult, AdapterStatus
 from video_editing_toolkit.adapters.ffmpeg import FFmpegAdapter
 from video_editing_toolkit.adapters.opencv import OpenCVAdapter
+from video_editing_toolkit.adapters.project_export import EXPORT_PROJECT_FORMAT
 from video_editing_toolkit.adapters.qc import (
     GENERATE_MEDIA_INSPECTION_EVIDENCE,
     QC_MEDIA_INSPECTION_EVIDENCE_SCHEMA,
 )
+from video_editing_toolkit.adapters.remotion import CREATE_REMOTION_RENDER_JOB
+from video_editing_toolkit.adapters.tts import GENERATE_VOICEOVER
 from video_editing_toolkit.agentctl import run_agentctl
 from video_editing_toolkit.resource_guard import ErrorCode
 from video_editing_toolkit.runtime import (
@@ -277,6 +280,115 @@ def test_agentctl_allowed_p1_qc_evidence_registers_and_executes_local_runner(
     assert output["qc_media_inspection_evidence_artifact_ref"]["artifact_type"] == "qc_media_inspection_evidence_json"
     assert len(response["processed"]["artifact_refs"]) == 1
     assert_no_public_path_or_command_leak(response)
+
+
+@pytest.mark.parametrize(
+    ("capability", "input_payload"),
+    [
+        (
+            GENERATE_VOICEOVER,
+            {
+                "text": "Narrate a five second product highlight.",
+                "synthesis_mode": "plan_only",
+                "voice_preset": "default_narrator",
+            },
+        ),
+        (
+            CREATE_REMOTION_RENDER_JOB,
+            {
+                "template_manifest": {
+                    "template_id": "brand-fastflash",
+                    "version": "1.0.0",
+                    "compositions": [
+                        {
+                            "composition_id": "Main",
+                            "duration_frames": 150,
+                            "fps": 30,
+                            "width": 1080,
+                            "height": 1920,
+                            "default_props": {"caption": "Launch"},
+                        }
+                    ],
+                },
+                "composition_id": "Main",
+                "props": {"caption": "Launch"},
+                "dispatcher_preflight_attestation": {
+                    "schema": "video_editing_toolkit.remotion_dispatcher_preflight_attestation.v0",
+                    "runtime": {
+                        "nodejs": "ready",
+                        "chromium": "ready",
+                        "remotion": "ready",
+                    },
+                    "sandbox": {
+                        "execution": "dispatcher_managed",
+                        "filesystem": "artifact_ref_only",
+                    },
+                    "network": {"egress": "deny_by_default"},
+                    "license": {"confirmed": True, "license_id": "remotion_team_license"},
+                    "execution": {"mode": "dispatcher_only", "execution_enabled": False},
+                },
+            },
+        ),
+        (
+            EXPORT_PROJECT_FORMAT,
+            {
+                "project_id": "proj_allowed_p1_export",
+                "format": "fcpxml",
+                "timeline": {
+                    "tracks": {
+                        "v1": {
+                            "kind": "video",
+                            "clips": [
+                                {
+                                    "clip_id": "clip_allowed_p1",
+                                    "kind": "video",
+                                    "start_seconds": 0,
+                                    "duration_seconds": 5,
+                                }
+                            ],
+                        }
+                    }
+                },
+            },
+        ),
+    ],
+)
+def test_agentctl_allowed_nonexecuting_p1_capabilities_remain_contract_only(
+    tmp_path: Path,
+    capability: str,
+    input_payload: dict[str, Any],
+) -> None:
+    response = run_agentctl(
+        {
+            "toolkit_id": "video-editing-toolkit",
+            "capability": capability,
+            "input": input_payload,
+            "policy_context": {
+                "tenant_id": "tenant_allowed_nonexecuting_p1",
+                "user_id": "user_allowed_nonexecuting_p1",
+            },
+        },
+        artifact_root=tmp_path / capability.replace(".", "_"),
+        allowed_p1_capabilities=(capability,),
+    )
+    output = response["processed"]["output"]
+
+    assert response["ok"] is True
+    assert response["processed"]["status"] == "succeeded"
+    assert response["processed"]["artifact_refs"] == []
+    assert_no_public_path_or_command_leak(response)
+    if capability == GENERATE_VOICEOVER:
+        assert output["synthesis_mode"] == "plan_only"
+        assert output["model_runtime"]["execution_enabled"] is False
+        assert output["audio_artifact_ref"] is None
+    elif capability == CREATE_REMOTION_RENDER_JOB:
+        assert output["dispatcher_required"] is True
+        assert output["render_job"]["command_materialization"] == "dispatcher_only"
+        assert output["dispatcher_readiness"]["runtime_execution"] == "not_started"
+        assert output["dispatcher_readiness"]["status"] == "ready"
+    elif capability == EXPORT_PROJECT_FORMAT:
+        assert output["runtime_execution"] == "not_started"
+        assert "<fcpxml" in output["fcpxml"]
 
 
 def test_local_runtime_processes_registered_project_edit_adapter(tmp_path) -> None:

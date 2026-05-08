@@ -283,6 +283,7 @@ New local JSON-only commands:
 ```powershell
 py -m video_editing_toolkit.platform_core --manifest-registration-dry-run
 py -m video_editing_toolkit.platform_core --local-loop-package
+py -m video_editing_toolkit.platform_core --p1-qc-smoke-rehearsal-json D:\app\video\素材1\p1_12_qc_smoke_result.json
 ```
 
 `--manifest-registration-dry-run` previews a Platform Core registration payload
@@ -305,6 +306,15 @@ learning/audit metadata preview
 Worker completions now also carry caller-safe `artifact_lifecycle_summary`
 metadata when input artifact refs are materialized or reused from cache. The
 summary includes only status, counts, and artifact ids.
+
+`--p1-qc-smoke-rehearsal-json` wraps a completed
+`video-toolkit-p1-qc-smoke --result-json` artifact as
+`platform_core_p1_qc_smoke_rehearsal.v0`. It does not rerun media analysis,
+enqueue jobs, call Platform Core, or modify repositories. The rehearsal package
+contains a Platform Core request preview, agentctl envelope preview, normalized
+completion, learning/audit metadata preview, and a QC quality gate while keeping
+`video.qc.generate_media_inspection_evidence` disabled in the manifest until a
+separate Platform Core rollout enables it.
 
 ## P1.8 Explicit Local Loop Runner
 
