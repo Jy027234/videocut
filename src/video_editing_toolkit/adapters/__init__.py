@@ -18,6 +18,7 @@ from .delivery import DeliveryAdapter
 from .ffmpeg import FFmpegAdapter
 from .opencv import OpenCVAdapter
 from .project_edit import ProjectEditAdapter
+from .project_export import ProjectExportAdapter
 from .qc import QCAdapter
 from .remotion import RemotionAdapter
 from .routing import (
@@ -53,6 +54,7 @@ __all__ = [
     "OpenCVAdapter",
     "PlaceholderAdapter",
     "ProjectEditAdapter",
+    "ProjectExportAdapter",
     "PySceneDetectAdapter",
     "QCAdapter",
     "RemotionAdapter",

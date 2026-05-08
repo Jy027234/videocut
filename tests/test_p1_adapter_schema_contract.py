@@ -11,7 +11,8 @@ import pytest
 from conftest import MANIFESTS_DIR, SCHEMAS_DIR, assert_no_public_path_or_command_leak, load_json
 import video_editing_toolkit.adapters.tts as tts_adapter
 from video_editing_toolkit.adapters import AdapterContext, AdapterRequest, AdapterStatus
-from video_editing_toolkit.adapters.qc import GENERATE_QC_REPORT, QCAdapter
+from video_editing_toolkit.adapters.project_export import EXPORT_PROJECT_FORMAT, ProjectExportAdapter
+from video_editing_toolkit.adapters.qc import BUILD_QC_EVIDENCE_PACKET, GENERATE_QC_REPORT, QCAdapter
 from video_editing_toolkit.adapters.remotion import (
     CREATE_REMOTION_RENDER_JOB,
     VALIDATE_REMOTION_TEMPLATE,
@@ -43,6 +44,10 @@ def test_p1_adapter_outputs_validate_against_manifest_schema_refs() -> None:
             QCAdapter().handle(_request(GENERATE_QC_REPORT, _passing_qc_payload())),
         ),
         (
+            BUILD_QC_EVIDENCE_PACKET,
+            QCAdapter().handle(_request(BUILD_QC_EVIDENCE_PACKET, _passing_qc_payload())),
+        ),
+        (
             VALIDATE_REMOTION_TEMPLATE,
             RemotionAdapter().handle(
                 _request(VALIDATE_REMOTION_TEMPLATE, _valid_remotion_payload())
@@ -52,6 +57,12 @@ def test_p1_adapter_outputs_validate_against_manifest_schema_refs() -> None:
             CREATE_REMOTION_RENDER_JOB,
             RemotionAdapter().handle(
                 _request(CREATE_REMOTION_RENDER_JOB, _valid_remotion_payload())
+            ),
+        ),
+        (
+            EXPORT_PROJECT_FORMAT,
+            ProjectExportAdapter().handle(
+                _request(EXPORT_PROJECT_FORMAT, _valid_project_export_payload())
             ),
         ),
     ]
@@ -193,6 +204,28 @@ def _valid_remotion_payload() -> dict[str, Any]:
         },
         "composition_id": "Main",
         "props": {"brand_color": "#31A8FF"},
+    }
+
+
+def _valid_project_export_payload() -> dict[str, Any]:
+    return {
+        "project_id": "proj_p1_schema_export",
+        "format": "fcpxml",
+        "timeline": {
+            "tracks": {
+                "v1": {
+                    "kind": "video",
+                    "clips": [
+                        {
+                            "clip_id": "clip_schema_video",
+                            "kind": "video",
+                            "start_seconds": 0,
+                            "duration_seconds": 5,
+                        }
+                    ],
+                }
+            }
+        },
     }
 
 

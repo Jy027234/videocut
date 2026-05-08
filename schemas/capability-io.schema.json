@@ -1126,6 +1126,171 @@
         }
       }
     },
+    "qc_evidence_packet_input": {
+      "$ref": "#/$defs/qc_report_input"
+    },
+    "qc_evidence_packet_output": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "qc_evidence_packet"
+      ],
+      "properties": {
+        "qc_evidence_packet": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "schema",
+            "summary",
+            "sections",
+            "evidence_refs",
+            "duration_summary",
+            "profile_summary",
+            "source_coverage",
+            "warnings"
+          ],
+          "properties": {
+            "schema": {
+              "const": "video_editing_toolkit.qc_evidence_packet.v0"
+            },
+            "summary": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "status",
+                "section_count",
+                "present_source_count",
+                "missing_source_count",
+                "evidence_ref_count",
+                "warning_count"
+              ],
+              "properties": {
+                "status": {
+                  "type": "string",
+                  "enum": [
+                    "ready",
+                    "warning"
+                  ]
+                },
+                "section_count": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "present_source_count": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "missing_source_count": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "evidence_ref_count": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "warning_count": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "duration_seconds": {
+                  "type": "number",
+                  "minimum": 0
+                },
+                "profile": {
+                  "type": "string"
+                }
+              }
+            },
+            "sections": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/qc_evidence_section"
+              }
+            },
+            "evidence_refs": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "duration_summary": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "number",
+                "minimum": 0
+              }
+            },
+            "profile_summary": {
+              "type": "object",
+              "additionalProperties": true
+            },
+            "source_coverage": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "present_sources",
+                "missing_sources",
+                "coverage_ratio"
+              ],
+              "properties": {
+                "present_sources": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "missing_sources": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "coverage_ratio": {
+                  "type": "number",
+                  "minimum": 0,
+                  "maximum": 1
+                }
+              }
+            },
+            "warnings": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": true,
+                "required": [
+                  "warning_id",
+                  "message",
+                  "evidence_refs"
+                ],
+                "properties": {
+                  "warning_id": {
+                    "type": "string"
+                  },
+                  "message": {
+                    "type": "string"
+                  },
+                  "evidence_refs": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "qc_evidence_packet_artifact_ref": {
+          "$ref": "#/$defs/public_artifact_ref"
+        },
+        "artifact_refs": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/public_artifact_ref"
+          }
+        }
+      }
+    },
     "remotion_template_validation_input": {
       "type": "object",
       "additionalProperties": false,
@@ -1473,6 +1638,192 @@
           }
         },
         "warnings": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "project_export_input": {
+      "type": "object",
+      "additionalProperties": false,
+      "anyOf": [
+        {
+          "required": [
+            "timeline"
+          ]
+        },
+        {
+          "required": [
+            "composition_plan"
+          ]
+        }
+      ],
+      "properties": {
+        "project_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "format": {
+          "type": "string",
+          "enum": [
+            "fcpxml"
+          ]
+        },
+        "export_format": {
+          "type": "string",
+          "enum": [
+            "fcpxml"
+          ]
+        },
+        "timeline": {
+          "type": "object",
+          "additionalProperties": true
+        },
+        "composition_plan": {
+          "type": "object",
+          "additionalProperties": true
+        },
+        "options": {
+          "type": "object",
+          "additionalProperties": true
+        }
+      }
+    },
+    "project_export_output": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema",
+        "format",
+        "project_id",
+        "timeline_summary",
+        "warnings",
+        "fcpxml_schema",
+        "runtime_execution",
+        "toolkit_id"
+      ],
+      "properties": {
+        "schema": {
+          "const": "video_editing_toolkit.project_export.v0"
+        },
+        "format": {
+          "const": "fcpxml"
+        },
+        "project_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "timeline_summary": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "duration_seconds",
+            "track_count",
+            "clip_count",
+            "video_clip_count",
+            "audio_clip_count",
+            "text_clip_count"
+          ],
+          "properties": {
+            "duration_seconds": {
+              "type": "number",
+              "minimum": 0
+            },
+            "track_count": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "clip_count": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "video_clip_count": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "audio_clip_count": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "text_clip_count": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        },
+        "warnings": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "code",
+              "message"
+            ],
+            "properties": {
+              "code": {
+                "type": "string"
+              },
+              "message": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "fcpxml_schema": {
+          "const": "fcpxml-1.10"
+        },
+        "fcpxml": {
+          "type": "string"
+        },
+        "project_export_artifact_ref": {
+          "$ref": "#/$defs/public_artifact_ref"
+        },
+        "artifact_refs": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/public_artifact_ref"
+          }
+        },
+        "runtime_execution": {
+          "const": "not_started"
+        },
+        "toolkit_id": {
+          "const": "video-editing-toolkit"
+        }
+      }
+    },
+    "qc_evidence_section": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "section_id",
+        "title",
+        "status",
+        "summary",
+        "evidence_refs"
+      ],
+      "properties": {
+        "section_id": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "present",
+            "missing"
+          ]
+        },
+        "summary": {
+          "type": "object",
+          "additionalProperties": true
+        },
+        "evidence_refs": {
           "type": "array",
           "items": {
             "type": "string"

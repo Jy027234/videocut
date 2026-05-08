@@ -234,8 +234,10 @@ preflight-only:
 | --- | --- | --- |
 | `audio.tts.generate_voiceover` | `moss_tts_nano` | `plan_only` and `preflight_only`; no download, no ONNX synthesis, no voice cloning. |
 | `video.qc.generate_report` | `qc` | Deterministic report from caller-safe timeline, probe, quality, and brand evidence. |
+| `video.qc.build_evidence_packet` | `qc` | Evidence packet descriptor and optional JSON artifact from caller-safe evidence only; no media inspection execution. |
 | `video.template.validate_remotion_template` | `remotion` | Template metadata and prop validation only; no Node or Chromium execution. |
 | `video.template.create_remotion_render_job` | `remotion` | Dispatcher job descriptor and readiness checks only; no Remotion render execution. |
+| `video.render.export_project_format` | `project_export` | FCPXML interchange descriptor or artifact only; no DaVinci Resolve, Final Cut Pro, shell, or local app automation. |
 
 The MOSS-TTS-Nano preflight expects a local ONNX bundle root containing
 `MOSS-TTS-Nano-100M-ONNX` and `MOSS-Audio-Tokenizer-Nano-ONNX`, or explicit TTS

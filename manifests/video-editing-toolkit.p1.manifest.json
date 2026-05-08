@@ -1309,6 +1309,49 @@
       }
     },
     {
+      "capability": "video.qc.build_evidence_packet",
+      "version": "0.2.0-p1.3",
+      "status": "disabled",
+      "input_schema": {
+        "$ref": "../schemas/capability-io.schema.json#/$defs/qc_evidence_packet_input"
+      },
+      "output_schema": {
+        "$ref": "../schemas/capability-io.schema.json#/$defs/qc_evidence_packet_output"
+      },
+      "data_sensitivity": "medium",
+      "approval_policy": "none",
+      "artifact_policy": "artifact_ref_required",
+      "error_codes": [
+        "QC_EVIDENCE_FAILED",
+        "ARTIFACT_ACCESS_DENIED"
+      ],
+      "required_permissions": [
+        "artifact:read",
+        "artifact:write",
+        "trace:write"
+      ],
+      "required_scopes": [
+        "toolkit.video_editing.p1"
+      ],
+      "quota_metrics": [
+        "input_bytes",
+        "output_bytes",
+        "evidence_source_count",
+        "worker_cpu_seconds"
+      ],
+      "pricing_metrics": [
+        "evidence_source_count"
+      ],
+      "sandbox_policy": {
+        "allow_raw_command": false,
+        "input_source": "artifact_ref_only",
+        "output_target": "artifact_ref_only",
+        "return_local_paths": false,
+        "network_access": "disabled_by_default",
+        "p1_3_runtime_mode": "contract_only_until_adapter_enabled"
+      }
+    },
+    {
       "capability": "video.template.validate_remotion_template",
       "version": "0.2.0-p1.1",
       "status": "disabled",
@@ -1400,6 +1443,57 @@
         "p1_1_runtime_mode": "contract_only_until_adapter_enabled",
         "run_chromium": false,
         "execution_mode": "job_descriptor_only"
+      }
+    },
+    {
+      "capability": "video.render.export_project_format",
+      "version": "0.2.0-p1.3",
+      "status": "disabled",
+      "input_schema": {
+        "$ref": "../schemas/capability-io.schema.json#/$defs/project_export_input"
+      },
+      "output_schema": {
+        "$ref": "../schemas/capability-io.schema.json#/$defs/project_export_output"
+      },
+      "data_sensitivity": "medium",
+      "approval_policy": "confirm",
+      "artifact_policy": "artifact_ref_required",
+      "error_codes": [
+        "PROJECT_EXPORT_FAILED",
+        "UNSUPPORTED_PROJECT_FORMAT",
+        "POLICY_VIOLATION",
+        "ARTIFACT_ACCESS_DENIED"
+      ],
+      "required_permissions": [
+        "artifact:read",
+        "artifact:write",
+        "trace:write"
+      ],
+      "required_scopes": [
+        "toolkit.video_editing.p1"
+      ],
+      "quota_metrics": [
+        "input_bytes",
+        "output_bytes",
+        "timeline_clip_count",
+        "worker_cpu_seconds"
+      ],
+      "pricing_metrics": [
+        "timeline_clip_count"
+      ],
+      "sandbox_policy": {
+        "allow_raw_command": false,
+        "input_source": "artifact_ref_only",
+        "output_target": "artifact_ref_only",
+        "return_local_paths": false,
+        "network_access": "disabled_by_default",
+        "p1_3_runtime_mode": "contract_only_until_adapter_enabled",
+        "supported_formats": [
+          "fcpxml"
+        ],
+        "run_davinci_resolve": false,
+        "run_final_cut_pro": false,
+        "execution_mode": "project_interchange_descriptor_only"
       }
     }
   ],

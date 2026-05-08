@@ -17,6 +17,9 @@ from video_editing_toolkit.adapters import (
     resolve_route,
 )
 from video_editing_toolkit.adapters.qc import (
+    BUILD_QC_EVIDENCE_PACKET,
+    QC_EVIDENCE_PACKET_ARTIFACT_TYPE,
+    QC_EVIDENCE_PACKET_SCHEMA,
     GENERATE_QC_REPORT,
     QC_REPORT_ARTIFACT_TYPE,
     QC_REPORT_SCHEMA,
@@ -258,6 +261,127 @@ def test_qc_report_blocks_from_probe_loudness_and_visual_sampling_evidence() -> 
     assert "launch.mp4" not in output_json
 
 
+def test_qc_evidence_packet_summarizes_caller_safe_sources() -> None:
+    result = _run_qc(_passing_payload(), capability=BUILD_QC_EVIDENCE_PACKET)
+
+    assert result.status == AdapterStatus.SUCCEEDED
+    packet = result.output["qc_evidence_packet"]
+    assert packet["schema"] == QC_EVIDENCE_PACKET_SCHEMA
+    assert packet["summary"]["status"] == "ready"
+    assert packet["summary"]["section_count"] == 7
+    assert packet["summary"]["present_source_count"] == 7
+    assert packet["summary"]["missing_source_count"] == 0
+    assert packet["summary"]["duration_seconds"] == 10.1
+    assert packet["summary"]["profile"] == "1080x1920"
+    assert packet["duration_summary"]["probe_duration_seconds"] == 10.1
+    assert packet["duration_summary"]["video_duration_seconds"] == 10.0
+    assert packet["profile_summary"]["width"] == 1080.0
+    assert packet["profile_summary"]["height"] == 1920.0
+    assert packet["source_coverage"]["coverage_ratio"] == 1.0
+    assert set(packet["source_coverage"]["present_sources"]) == {
+        "media_probe",
+        "audio_quality",
+        "visual_quality",
+        "timeline",
+        "subtitles",
+        "brand_kit",
+        "delivery_targets",
+    }
+    assert "media_probe.duration_seconds" in packet["evidence_refs"]
+    assert "delivery_targets.platform_profile" in packet["evidence_refs"]
+    assert_no_public_path_or_command_leak(result.output)
+
+
+def test_qc_evidence_packet_writes_artifact_when_store_is_available(tmp_path: Path) -> None:
+    artifact_store = LocalArtifactStore(
+        tmp_path / "artifacts",
+        public_base_path="https://artifacts.local/download",
+        signing_secret="signed-packet-secret",
+    )
+    payload = _passing_payload() | {"_artifact_store": artifact_store}
+
+    result = _run_qc(payload, capability=BUILD_QC_EVIDENCE_PACKET)
+
+    assert result.status == AdapterStatus.SUCCEEDED
+    assert len(result.artifact_refs) == 1
+    artifact_ref = result.artifact_refs[0]
+    assert artifact_ref.artifact_type == QC_EVIDENCE_PACKET_ARTIFACT_TYPE
+    assert result.output["qc_evidence_packet_artifact_ref"]["artifact_id"] == artifact_ref.artifact_id
+    assert "storage_uri" not in result.output["qc_evidence_packet_artifact_ref"]
+    assert "download_url" not in result.output["qc_evidence_packet_artifact_ref"]
+
+    packet_path = artifact_store.open_local_path(artifact_ref.artifact_id)
+    assert packet_path is not None
+    packet_payload = json.loads(packet_path.read_text(encoding="utf-8"))
+    assert packet_payload["schema"] == QC_EVIDENCE_PACKET_SCHEMA
+    assert packet_payload["summary"]["status"] == "ready"
+    assert_no_public_path_or_command_leak(packet_payload)
+    assert_no_public_path_or_command_leak(result.output)
+    assert str(tmp_path) not in json.dumps(result.output, sort_keys=True)
+
+
+def test_qc_evidence_packet_omits_path_storage_and_download_token_inputs(tmp_path: Path) -> None:
+    payload = _passing_payload() | {
+        "_worker_media_path": str(tmp_path / "private" / "launch.mp4"),
+        "media_probe": {
+            "duration_seconds": 10.1,
+            "storage_uri": "s3://internal-bucket/private/launch.mp4",
+            "download_url": "https://download.example/private/launch.mp4?sat=secret-token",
+            "errors": [
+                {
+                    "code": "decode_failure",
+                    "path": str(tmp_path / "private" / "launch.mp4"),
+                }
+            ],
+            "streams": [
+                {"codec_type": "video", "width": 1080, "height": 1920, "avg_frame_rate": "30/1"},
+                {"codec_type": "audio"},
+            ],
+        },
+        "delivery_targets": {
+            "platform_profile": {
+                "name": str(tmp_path / "profiles" / "internal.json"),
+                "width": 1080,
+                "height": 1920,
+                "aspect_ratio": "9:16",
+            }
+        },
+    }
+
+    result = _run_qc(payload, capability=BUILD_QC_EVIDENCE_PACKET)
+
+    assert result.status == AdapterStatus.SUCCEEDED
+    rendered = json.dumps(result.output, sort_keys=True)
+    assert_no_public_path_or_command_leak(result.output)
+    assert "_worker_media_path" not in rendered
+    assert "storage_uri" not in rendered
+    assert "download.example" not in rendered
+    assert "secret-token" not in rendered
+    assert "launch.mp4" not in rendered
+    assert str(tmp_path) not in rendered
+    assert result.output["qc_evidence_packet"]["summary"]["profile"] == "1080x1920"
+
+
+def test_qc_build_evidence_packet_resolves_through_p1_route() -> None:
+    route = resolve_p1_experimental_route(BUILD_QC_EVIDENCE_PACKET)
+    adapter = build_p1_experimental_adapter(BUILD_QC_EVIDENCE_PACKET)
+
+    assert BUILD_QC_EVIDENCE_PACKET not in CAPABILITY_ROUTES
+    assert BUILD_QC_EVIDENCE_PACKET in P1_CAPABILITY_ROUTES
+    assert route.adapter_name == QCAdapter.adapter_name
+    assert route.adapter_class is QCAdapter
+    assert route.queue_topic == "video.qc.evidence"
+    assert adapter.adapter_name == "qc"
+    assert adapter.supports(BUILD_QC_EVIDENCE_PACKET)
+
+    try:
+        resolve_route(BUILD_QC_EVIDENCE_PACKET)
+    except ValueError as exc:
+        assert "No adapter route registered" in str(exc)
+    else:
+        raise AssertionError("P1 QC should not resolve through the default P0 route table")
+
+
 def test_qc_generate_report_resolves_through_p1_route() -> None:
     route = resolve_p1_experimental_route(GENERATE_QC_REPORT)
     adapter = build_p1_experimental_adapter(GENERATE_QC_REPORT)
@@ -278,7 +402,7 @@ def test_qc_generate_report_resolves_through_p1_route() -> None:
         raise AssertionError("P1 QC should not resolve through the default P0 route table")
 
 
-def _run_qc(input_payload: dict[str, Any]):
+def _run_qc(input_payload: dict[str, Any], *, capability: str = GENERATE_QC_REPORT):
     return QCAdapter().handle(
         AdapterRequest(
             context=AdapterContext(
@@ -286,7 +410,7 @@ def _run_qc(input_payload: dict[str, Any]):
                 project_id="demo_project",
                 run_id="run_qc_contract",
                 tool_call_id="tool_call_qc_contract",
-                capability=GENERATE_QC_REPORT,
+                capability=capability,
             ),
             input=input_payload,
         )

@@ -59,11 +59,13 @@ HIGH_SENSITIVITY = {"high", "restricted", "biometric", "voice"}
 TOOLKIT_MANIFEST_SCHEMA_PATH = SCHEMAS_DIR / "toolkit-manifest.schema.json"
 P0_MANIFEST_PATH = MANIFESTS_DIR / "video-editing-toolkit.p0.manifest.json"
 P1_MANIFEST_PATH = MANIFESTS_DIR / "video-editing-toolkit.p1.manifest.json"
-P1_1_CAPABILITIES = {
+P1_DRAFT_CAPABILITIES = {
     "audio.tts.generate_voiceover",
     "video.qc.generate_report",
+    "video.qc.build_evidence_packet",
     "video.template.validate_remotion_template",
     "video.template.create_remotion_render_job",
+    "video.render.export_project_format",
 }
 DEFERRED_HIGH_SENSITIVITY_CAPABILITIES = {
     "audio.tts.clone_voice",
@@ -158,20 +160,29 @@ def test_p1_manifest_extends_p0_without_default_enabling_p1_or_sensitive_capabil
     }
 
     assert p0_capabilities.issubset(p1_capabilities)
-    assert P1_1_CAPABILITIES.issubset(p1_capabilities)
-    assert not P1_1_CAPABILITIES.intersection(enabled_capabilities)
+    assert P1_DRAFT_CAPABILITIES.issubset(p1_capabilities)
+    assert not P1_DRAFT_CAPABILITIES.intersection(enabled_capabilities)
     assert not DEFERRED_HIGH_SENSITIVITY_CAPABILITIES.intersection(enabled_capabilities)
 
     p1_entries = {
         capability["capability"]: capability
         for capability in p1_manifest["capabilities"]
-        if capability["capability"] in P1_1_CAPABILITIES
+        if capability["capability"] in P1_DRAFT_CAPABILITIES
     }
     assert {entry["status"] for entry in p1_entries.values()} == {"disabled"}
     assert p1_entries["audio.tts.generate_voiceover"]["sandbox_policy"]["download_models"] is False
     assert p1_entries["audio.tts.generate_voiceover"]["sandbox_policy"]["voice_cloning"] == "disabled"
+    assert (
+        p1_entries["video.qc.build_evidence_packet"]["sandbox_policy"]["p1_3_runtime_mode"]
+        == "contract_only_until_adapter_enabled"
+    )
     assert p1_entries["video.template.validate_remotion_template"]["sandbox_policy"]["run_chromium"] is False
     assert p1_entries["video.template.create_remotion_render_job"]["sandbox_policy"]["run_chromium"] is False
+    assert p1_entries["video.render.export_project_format"]["sandbox_policy"]["supported_formats"] == [
+        "fcpxml"
+    ]
+    assert p1_entries["video.render.export_project_format"]["sandbox_policy"]["run_davinci_resolve"] is False
+    assert p1_entries["video.render.export_project_format"]["sandbox_policy"]["run_final_cut_pro"] is False
 
     deferred = p1_manifest["approval_policy"]["deferred_high_sensitivity_capabilities"]
     assert {entry["capability"] for entry in deferred} == DEFERRED_HIGH_SENSITIVITY_CAPABILITIES

@@ -13,21 +13,30 @@ from .base import AdapterRequest, AdapterResult, AdapterStatus, BaseAdapter
 
 
 GENERATE_QC_REPORT = "video.qc.generate_report"
+BUILD_QC_EVIDENCE_PACKET = "video.qc.build_evidence_packet"
 QC_REPORT_SCHEMA = "video_editing_toolkit.qc_report.v0"
 QC_REPORT_ARTIFACT_TYPE = "qc_report_json"
+QC_EVIDENCE_PACKET_SCHEMA = "video_editing_toolkit.qc_evidence_packet.v0"
+QC_EVIDENCE_PACKET_ARTIFACT_TYPE = "qc_evidence_packet_json"
 _EPSILON = 0.000001
 _DEFAULT_DRIFT_WARNING_SECONDS = 0.5
 _SAFE_CODE_PATTERN = re.compile(r"[^A-Za-z0-9_.-]+")
+_LOCAL_PATH_PATTERN = re.compile(
+    r"(?<![A-Za-z])[A-Za-z]:[\\/]|\\\\|file://|local-artifact://|(?<![A-Za-z0-9_])/(Users|home|var|tmp|private|mnt)/",
+    re.IGNORECASE,
+)
 
 
 class QCAdapter(BaseAdapter):
     adapter_name = "qc"
-    supported_capabilities = frozenset({GENERATE_QC_REPORT})
+    supported_capabilities = frozenset({GENERATE_QC_REPORT, BUILD_QC_EVIDENCE_PACKET})
     default_limits = CPU_LIGHT_LIMITS
 
     def invoke(self, request: AdapterRequest) -> AdapterResult:
         if request.context.capability == GENERATE_QC_REPORT:
             return self.generate_report(request)
+        if request.context.capability == BUILD_QC_EVIDENCE_PACKET:
+            return self.build_evidence_packet(request)
         return AdapterResult.unsupported(request.context.capability, self.adapter_name)
 
     def generate_report(self, request: AdapterRequest) -> AdapterResult:
@@ -58,6 +67,39 @@ class QCAdapter(BaseAdapter):
                 "check_count": report["summary"]["check_count"],
                 "blocking_issue_count": report["summary"]["blocking_issue_count"],
                 "warning_count": report["summary"]["warning_count"],
+                "artifact_count": len(artifact_refs),
+            },
+        )
+
+    def build_evidence_packet(self, request: AdapterRequest) -> AdapterResult:
+        packet = build_qc_evidence_packet(request.input)
+        output: dict[str, Any] = {"qc_evidence_packet": packet}
+        artifact_refs: tuple[ArtifactRef, ...] = ()
+
+        artifact_store = self._artifact_store(request)
+        if artifact_store is not None:
+            packet_ref = artifact_store.put_bytes(
+                content=_json_bytes(packet),
+                artifact_type=QC_EVIDENCE_PACKET_ARTIFACT_TYPE,
+                owner_tenant_id=request.context.tenant_id,
+                created_by_run_id=request.context.run_id,
+                filename="qc_evidence_packet.json",
+                mime_type="application/json",
+            )
+            artifact_refs = (packet_ref,)
+            public_ref = _artifact_public_dict_without_download_token(packet_ref)
+            output["qc_evidence_packet_artifact_ref"] = public_ref
+            output["artifact_refs"] = [public_ref]
+
+        return AdapterResult(
+            status=AdapterStatus.SUCCEEDED,
+            output=output,
+            artifact_refs=artifact_refs,
+            usage_metrics={
+                "operation": "build_evidence_packet",
+                "section_count": packet["summary"]["section_count"],
+                "evidence_ref_count": packet["summary"]["evidence_ref_count"],
+                "warning_count": packet["summary"]["warning_count"],
                 "artifact_count": len(artifact_refs),
             },
         )
@@ -112,6 +154,394 @@ def build_qc_report(input_payload: Mapping[str, Any]) -> dict[str, Any]:
         "warnings": warnings,
         "evidence_refs": evidence_refs,
     }
+
+
+def build_qc_evidence_packet(input_payload: Mapping[str, Any]) -> dict[str, Any]:
+    sections = [
+        _evidence_section("media_probe", "Media probe", input_payload, ("media_probe", "probe")),
+        _evidence_section("audio_quality", "Audio quality", input_payload, ("audio_quality",)),
+        _evidence_section("visual_quality", "Visual quality", input_payload, ("visual_quality",)),
+        _evidence_section(
+            "timeline",
+            "Timeline",
+            input_payload,
+            ("timeline", "composition_plan"),
+        ),
+        _evidence_section("subtitles", "Subtitles", input_payload, ("subtitles",)),
+        _evidence_section("brand_kit", "Brand kit", input_payload, ("brand_kit",)),
+        _evidence_section(
+            "delivery_targets",
+            "Delivery targets",
+            input_payload,
+            ("delivery_targets", "platform_profile"),
+        ),
+    ]
+    present_sources = [section["section_id"] for section in sections if section["status"] == "present"]
+    missing_sources = [section["section_id"] for section in sections if section["status"] == "missing"]
+    evidence_refs = _unique_ref(
+        ref for section in sections for ref in section.get("evidence_refs", [])
+    )
+    warnings = _evidence_packet_warnings(input_payload, missing_sources)
+    duration_summary = _duration_summary(input_payload)
+    profile_summary = _profile_summary(input_payload)
+
+    return {
+        "schema": QC_EVIDENCE_PACKET_SCHEMA,
+        "summary": _compact_dict(
+            {
+                "status": "warning" if warnings else "ready",
+                "section_count": len(sections),
+                "present_source_count": len(present_sources),
+                "missing_source_count": len(missing_sources),
+                "evidence_ref_count": len(evidence_refs),
+                "warning_count": len(warnings),
+                "duration_seconds": duration_summary.get("canonical_duration_seconds"),
+                "profile": profile_summary.get("profile_label"),
+            }
+        ),
+        "sections": sections,
+        "evidence_refs": evidence_refs,
+        "duration_summary": duration_summary,
+        "profile_summary": profile_summary,
+        "source_coverage": {
+            "present_sources": present_sources,
+            "missing_sources": missing_sources,
+            "coverage_ratio": round(len(present_sources) / len(sections), 3),
+        },
+        "warnings": warnings,
+    }
+
+
+def _artifact_public_dict_without_download_token(ref: ArtifactRef) -> dict[str, Any]:
+    public_ref = ref.to_public_dict()
+    download_url = public_ref.get("download_url")
+    if isinstance(download_url, str) and ("?" in download_url or "token" in download_url.casefold()):
+        public_ref.pop("download_url", None)
+    return public_ref
+
+
+def _evidence_section(
+    section_id: str,
+    title: str,
+    input_payload: Mapping[str, Any],
+    source_keys: tuple[str, ...],
+) -> dict[str, Any]:
+    source_values = [(key, input_payload.get(key)) for key in source_keys if key in input_payload]
+    present_values = [(key, value) for key, value in source_values if _has_evidence(value)]
+    status = "present" if present_values else "missing"
+    refs = [key for key, _value in present_values]
+    summary: dict[str, Any] = {"source_keys": [key for key, _value in present_values]}
+
+    if section_id == "media_probe":
+        probe = _media_probe(input_payload) or {}
+        streams = _media_streams(probe)
+        summary.update(
+            {
+                "duration_seconds": _rounded_or_none(_probe_duration_seconds(input_payload)),
+                "stream_count": len(streams),
+                "has_video_stream": any(stream["kind"] == "video" for stream in streams),
+                "has_audio_stream": any(stream["kind"] == "audio" for stream in streams),
+            }
+        )
+        refs.extend(_media_probe_refs(probe, streams))
+    elif section_id == "audio_quality":
+        audio = _mapping(input_payload.get("audio_quality")) or {}
+        summary.update(_audio_quality_summary(audio))
+        refs.extend(_existing_metric_refs(audio, "audio_quality", _AUDIO_QUALITY_REF_KEYS))
+    elif section_id == "visual_quality":
+        visual = _mapping(input_payload.get("visual_quality")) or {}
+        summary.update(_visual_quality_summary(visual))
+        refs.extend(_existing_metric_refs(visual, "visual_quality", _VISUAL_QUALITY_REF_KEYS))
+    elif section_id == "timeline":
+        timeline = _mapping(input_payload.get("timeline"))
+        plan = _mapping(input_payload.get("composition_plan"))
+        clips = _timeline_clips(timeline or {})
+        summary.update(
+            {
+                "clip_count": len(clips),
+                "track_count": _timeline_track_count(timeline),
+                "composition_error_count": len(_list(plan.get("errors")) if plan else []),
+                "composition_warning_count": len(_list(plan.get("warnings")) if plan else []),
+                "duration_seconds": _rounded_or_none(_timeline_duration_seconds(timeline)),
+            }
+        )
+        refs.extend(["timeline.tracks"] if timeline is not None else [])
+        refs.extend(["composition_plan.summary"] if plan is not None else [])
+    elif section_id == "subtitles":
+        subtitles = _subtitle_segments(input_payload)
+        summary.update({"segment_count": len(subtitles)})
+        if subtitles:
+            summary["first_start_seconds"] = round(subtitles[0]["start_seconds"], 3)
+            summary["last_end_seconds"] = round(max(item["end_seconds"] for item in subtitles), 3)
+        refs.extend(item["evidence_ref"] for item in subtitles)
+    elif section_id == "brand_kit":
+        brand = _mapping(input_payload.get("brand_kit")) or {}
+        summary.update(
+            {
+                "required_keyword_count": len(_string_list(brand.get("required_keywords"))),
+                "forbidden_keyword_count": len(_string_list(brand.get("forbidden_keywords"))),
+                "has_required_safe_area": _safe_area_box(brand.get("required_safe_area")) is not None,
+            }
+        )
+        refs.extend(_existing_metric_refs(brand, "brand_kit", ("required_keywords", "forbidden_keywords", "required_safe_area")))
+    elif section_id == "delivery_targets":
+        profile = _delivery_profile(input_payload)
+        summary.update(_profile_summary(input_payload))
+        if profile is not None:
+            refs.append("delivery_targets.platform_profile")
+
+    return {
+        "section_id": section_id,
+        "title": title,
+        "status": status,
+        "summary": _compact_dict(summary),
+        "evidence_refs": _unique_ref(refs),
+    }
+
+
+_AUDIO_QUALITY_REF_KEYS = (
+    "integrated_lufs",
+    "lufs",
+    "true_peak_dbtp",
+    "true_peak_db",
+    "silence_ratio",
+    "duration_seconds",
+)
+_VISUAL_QUALITY_REF_KEYS = (
+    "black_frame_seconds",
+    "freeze_frame_seconds",
+    "low_light_ratio",
+    "duration_seconds",
+    "black_frames",
+    "freeze_frames",
+    "safe_area_violations",
+)
+
+
+def _duration_summary(input_payload: Mapping[str, Any]) -> dict[str, Any]:
+    probe_duration = _probe_duration_seconds(input_payload)
+    video_duration = _video_duration_seconds(input_payload)
+    audio_duration = _audio_duration_seconds(input_payload)
+    timeline_duration = _timeline_duration_seconds(_mapping(input_payload.get("timeline")))
+    canonical = _first_present(probe_duration, video_duration, audio_duration, timeline_duration)
+    return _compact_dict(
+        {
+            "canonical_duration_seconds": _rounded_or_none(canonical),
+            "probe_duration_seconds": _rounded_or_none(probe_duration),
+            "video_duration_seconds": _rounded_or_none(video_duration),
+            "audio_duration_seconds": _rounded_or_none(audio_duration),
+            "timeline_duration_seconds": _rounded_or_none(timeline_duration),
+        }
+    )
+
+
+def _profile_summary(input_payload: Mapping[str, Any]) -> dict[str, Any]:
+    profile = _delivery_profile(input_payload)
+    if profile is None:
+        return {"status": "missing"}
+
+    width = _positive_number(profile.get("width", profile.get("target_width")))
+    height = _positive_number(profile.get("height", profile.get("target_height")))
+    min_fps = _positive_number(profile.get("min_fps"))
+    max_fps = _positive_number(profile.get("max_fps"))
+    profile_name = _public_string(
+        _first_present(profile.get("profile_id"), profile.get("name"), profile.get("platform"))
+    )
+    profile_label = profile_name
+    if profile_label is None and width is not None and height is not None:
+        profile_label = f"{int(width)}x{int(height)}"
+
+    return _compact_dict(
+        {
+            "status": "present",
+            "profile_label": profile_label,
+            "width": _rounded_or_none(width),
+            "height": _rounded_or_none(height),
+            "aspect_ratio": _public_string(profile.get("aspect_ratio", profile.get("target_aspect_ratio"))),
+            "min_fps": _rounded_or_none(min_fps),
+            "max_fps": _rounded_or_none(max_fps),
+            "min_duration_seconds": _rounded_or_none(_positive_number(profile.get("min_duration_seconds"))),
+            "max_duration_seconds": _rounded_or_none(_positive_number(profile.get("max_duration_seconds"))),
+        }
+    )
+
+
+def _evidence_packet_warnings(input_payload: Mapping[str, Any], missing_sources: list[str]) -> list[dict[str, Any]]:
+    warnings: list[dict[str, Any]] = []
+    for source in missing_sources:
+        warnings.append(
+            {
+                "warning_id": f"missing_{source}",
+                "message": f"{source} evidence is missing.",
+                "evidence_refs": [],
+            }
+        )
+
+    probe_duration = _probe_duration_seconds(input_payload)
+    timeline_duration = _timeline_duration_seconds(_mapping(input_payload.get("timeline")))
+    if probe_duration is not None and timeline_duration is not None:
+        drift = round(timeline_duration - probe_duration, 3)
+        if abs(drift) > _DEFAULT_DRIFT_WARNING_SECONDS:
+            warnings.append(
+                {
+                    "warning_id": "duration_mismatch",
+                    "message": "Timeline and probe durations differ beyond the evidence threshold.",
+                    "evidence_refs": ["timeline.tracks", "media_probe.duration_seconds"],
+                    "details": {"drift_seconds": drift},
+                }
+            )
+    return warnings
+
+
+def _media_probe_refs(probe: Mapping[str, Any], streams: list[dict[str, Any]]) -> list[str]:
+    refs: list[str] = []
+    if probe:
+        refs.append("media_probe")
+    if _probe_duration_seconds({"media_probe": probe}) is not None:
+        refs.append("media_probe.duration_seconds")
+    if any(stream["kind"] == "video" for stream in streams):
+        refs.append("media_probe.streams.video")
+    if any(stream["kind"] == "audio" for stream in streams):
+        refs.append("media_probe.streams.audio")
+    return refs
+
+
+def _audio_quality_summary(audio: Mapping[str, Any]) -> dict[str, Any]:
+    return _compact_dict(
+        {
+            "duration_seconds": _rounded_or_none(
+                _first_seconds(
+                    audio.get("duration_seconds"),
+                    _nested_value(audio, ("quality_summary", "duration_seconds")),
+                    _nested_value(audio, ("summary", "duration_seconds")),
+                )
+            ),
+            "integrated_lufs": _rounded_or_none(
+                _number(
+                    _first_present(
+                        audio.get("integrated_lufs"),
+                        audio.get("lufs"),
+                        _nested_value(audio, ("quality_summary", "integrated_lufs")),
+                        _nested_value(audio, ("summary", "integrated_lufs")),
+                    )
+                )
+            ),
+            "true_peak_dbtp": _rounded_or_none(
+                _number(
+                    _first_present(
+                        audio.get("true_peak_dbtp"),
+                        audio.get("true_peak_db"),
+                        _nested_value(audio, ("quality_summary", "true_peak_dbtp")),
+                        _nested_value(audio, ("summary", "true_peak_dbtp")),
+                    )
+                )
+            ),
+            "silence_ratio": _rounded_or_none(
+                _ratio(
+                    _first_present(
+                        audio.get("silence_ratio"),
+                        _nested_value(audio, ("quality_summary", "silence_ratio")),
+                        _nested_value(audio, ("summary", "silence_ratio")),
+                    )
+                )
+            ),
+        }
+    )
+
+
+def _visual_quality_summary(visual: Mapping[str, Any]) -> dict[str, Any]:
+    return _compact_dict(
+        {
+            "duration_seconds": _rounded_or_none(
+                _first_seconds(
+                    visual.get("duration_seconds"),
+                    _nested_value(visual, ("quality_summary", "duration_seconds")),
+                    _nested_value(visual, ("summary", "duration_seconds")),
+                )
+            ),
+            "black_frame_seconds": _rounded_or_none(
+                _positive_number(
+                    _first_present(
+                        visual.get("black_frame_seconds"),
+                        _nested_value(visual, ("summary", "black_frame_seconds")),
+                    )
+                )
+            ),
+            "freeze_frame_seconds": _rounded_or_none(
+                _positive_number(
+                    _first_present(
+                        visual.get("freeze_frame_seconds"),
+                        _nested_value(visual, ("summary", "freeze_frame_seconds")),
+                    )
+                )
+            ),
+            "low_light_ratio": _rounded_or_none(
+                _ratio(
+                    _first_present(
+                        visual.get("low_light_ratio"),
+                        _nested_value(visual, ("summary", "low_light_ratio")),
+                    )
+                )
+            ),
+            "black_frame_count": len(_list(visual.get("black_frames")) + _list(visual.get("black_frame_segments"))),
+            "freeze_frame_count": len(_list(visual.get("freeze_frames")) + _list(visual.get("freeze_segments"))),
+            "safe_area_violation_count": len(_list(visual.get("safe_area_violations"))),
+        }
+    )
+
+
+def _existing_metric_refs(source: Mapping[str, Any], prefix: str, keys: tuple[str, ...]) -> list[str]:
+    refs: list[str] = []
+    for key in keys:
+        if key in source:
+            refs.append(f"{prefix}.{key}")
+        if _nested_value(source, ("quality_summary", key)) is not None:
+            refs.append(f"{prefix}.quality_summary.{key}")
+        if _nested_value(source, ("summary", key)) is not None:
+            refs.append(f"{prefix}.summary.{key}")
+    return refs
+
+
+def _timeline_track_count(timeline: Mapping[str, Any] | None) -> int:
+    if timeline is None:
+        return 0
+    raw_tracks = timeline.get("tracks", {})
+    if isinstance(raw_tracks, Mapping):
+        return len(raw_tracks)
+    if isinstance(raw_tracks, list):
+        return len(raw_tracks)
+    return 0
+
+
+def _has_evidence(value: Any) -> bool:
+    if value is None:
+        return False
+    if isinstance(value, (Mapping, list, tuple, set)):
+        return bool(value)
+    return True
+
+
+def _public_string(value: Any) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    if not text or _LOCAL_PATH_PATTERN.search(text):
+        return None
+    lowered = text.casefold()
+    if "storage_uri" in lowered or "token" in lowered:
+        return None
+    return text[:128]
+
+
+def _rounded_or_none(value: Any) -> float | None:
+    parsed = _number(value)
+    if parsed is None:
+        return None
+    return round(parsed, 3)
+
+
+def _compact_dict(value: Mapping[str, Any]) -> dict[str, Any]:
+    return {key: item for key, item in value.items() if item is not None}
 
 
 def _timeline_structure_check(input_payload: Mapping[str, Any]) -> dict[str, Any]:
