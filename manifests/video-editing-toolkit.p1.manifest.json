@@ -3,7 +3,7 @@
   "toolkit_id": "video-editing-toolkit",
   "display_name": "Video Editing Toolkit",
   "category": "video_editing",
-  "version": "0.2.0-p1.6",
+  "version": "0.2.0-p1.7",
   "status": "draft",
   "runtime_adapter": {
     "type": "local_worker",
@@ -57,6 +57,13 @@
       "voice_cloning": "disabled",
       "network_access": "disabled_by_default",
       "execution_mode": "contract_only_until_adapter_enabled"
+    },
+    "p1_7_platform_core_handoff": {
+      "manifest_registration": "dry_run_only",
+      "local_loop_rehearsal": "no_network_mutation",
+      "platform_core_repository_mutation": false,
+      "enable_p1_disabled_capabilities": false,
+      "product_side_rollout_required": true
     }
   },
   "artifact_policy": {

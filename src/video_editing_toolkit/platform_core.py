@@ -22,6 +22,11 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import quote, urljoin
 from urllib.request import Request, urlopen as default_urlopen
 
+from video_editing_toolkit.agentctl_remote import (
+    build_runspec_enqueue_payload,
+    build_tool_catalog_registration_payload,
+)
+
 
 TOOLKIT_ID = "video-editing-toolkit"
 SCHEMA = "video_editing_toolkit.platform_core.handoff.v0"
@@ -560,6 +565,231 @@ def build_platform_core_learning_audit_event(
     return _caller_safe(event)
 
 
+def build_platform_core_manifest_registration_dry_run(
+    manifest_path: str | Path = DEFAULT_P1_MANIFEST_PATH,
+    *,
+    tenant_id: str = "platform_review",
+) -> dict[str, Any]:
+    """Build a Platform Core manifest registration rehearsal without mutation."""
+
+    manifest_path = Path(manifest_path)
+    manifest = _load_manifest(manifest_path)
+    capabilities = [
+        item
+        for item in manifest.get("capabilities", [])
+        if isinstance(item, Mapping) and isinstance(item.get("capability"), str)
+    ]
+    enabled = [item for item in capabilities if item.get("status") == "enabled"]
+    disabled = [item for item in capabilities if item.get("status") == "disabled"]
+    p1_review = [
+        item
+        for item in disabled
+        if "toolkit.video_editing.p1" in _string_list(item.get("required_scopes"))
+    ]
+    registration_payload = build_tool_catalog_registration_payload(
+        manifest_path,
+        tenant_id=tenant_id,
+    )
+    capability_enum = _registration_capability_enum(registration_payload)
+
+    dry_run = {
+        "schema": SCHEMA,
+        "contract": "platform_core_manifest_registration_dry_run.v0",
+        "toolkit_id": manifest.get("toolkit_id", TOOLKIT_ID),
+        "version": manifest.get("version"),
+        "status": "review_only",
+        "tenant_id": tenant_id,
+        "dry_run": True,
+        "network_mutation": False,
+        "publishable": False,
+        "source_manifest": {
+            "path": _repo_relative_path(manifest_path),
+            "sha256": _file_sha256(manifest_path),
+            "version": manifest.get("version"),
+            "status": manifest.get("status"),
+            "category": manifest.get("category"),
+        },
+        "registration_preview": {
+            "target_surface": "platform_core_tool_catalog",
+            "method": "import_review_draft",
+            "tool_id": registration_payload.get("tool_id"),
+            "display_name": registration_payload.get("display_name"),
+            "tenant_id": registration_payload.get("tenant_id"),
+            "invokable_capabilities": capability_enum,
+            "invokable_capability_count": len(capability_enum),
+            "credential_ref_count": 0,
+            "required_scopes": _string_list(registration_payload.get("required_scopes")),
+            "metadata": _mapping_or_empty(registration_payload.get("metadata")),
+        },
+        "capability_matrix": {
+            "enabled_count": len(enabled),
+            "disabled_count": len(disabled),
+            "p1_review_count": len(p1_review),
+            "enabled_capabilities": [_capability_listing(item) for item in enabled],
+            "p1_review_only_capabilities": [_capability_listing(item) for item in p1_review],
+        },
+        "activation_policy": {
+            "default_route_table": "p0_only",
+            "preserve_manifest_status": True,
+            "enable_p1_disabled_capabilities": False,
+            "requires_platform_core_product_review": True,
+            "tenant_rollout_required": True,
+        },
+        "platform_core_boundaries": {
+            "write_platform_core_repository": False,
+            "call_platform_core_network_api": False,
+            "register_tool_catalog": False,
+            "publish_release_center": False,
+            "ingest_learning_audit": False,
+            "upload_artifact_bytes": False,
+        },
+        "blocked_actions": [
+            "modify_platform_core_repository",
+            "register_tool_catalog_without_explicit_platform_core_action",
+            "publish_to_release_center",
+            "enable_p1_capabilities",
+            "run_heavy_media_inside_platform_core",
+            "ingest_raw_media_or_prompt",
+        ],
+    }
+    return _caller_safe(dry_run)
+
+
+def build_platform_core_local_loop_rehearsal_package(
+    manifest_path: str | Path = DEFAULT_P1_MANIFEST_PATH,
+    *,
+    tenant_id: str = "platform_review",
+    capability: str = "video.project_edit.create_project",
+    input_payload: Mapping[str, Any] | None = None,
+    artifact_refs: Sequence[Mapping[str, Any]] | None = None,
+) -> dict[str, Any]:
+    """Build a no-mutation local loop rehearsal package for Platform Core."""
+
+    manifest_path = Path(manifest_path)
+    manifest = _load_manifest(manifest_path)
+    selected_input = dict(input_payload or {"project_id": "proj_platform_core_rehearsal"})
+    selected_artifact_refs = _audit_artifact_refs(_public_artifact_refs(list(artifact_refs or ())))
+    request = {
+        "platform_run_id": "platform_run_p1_7_rehearsal",
+        "platform_tool_call_id": "platform_tool_call_p1_7_rehearsal",
+        "platform_trace_id": "trace_p1_7_platform_core_rehearsal",
+        "toolkit_id": TOOLKIT_ID,
+        "capability": capability,
+        "version": "0.1.0",
+        "tenant_id": tenant_id,
+        "user_id": "platform_core_rehearsal",
+        "input": selected_input,
+        "artifact_refs": selected_artifact_refs,
+        "policy_context": {
+            "tenant_id": tenant_id,
+            "user_id": "platform_core_rehearsal",
+            "data_policy": {"artifact_contract": "artifact_ref_only"},
+            "quota_policy": {"profile": "p1_7_rehearsal"},
+        },
+    }
+    completion_template = build_platform_core_completion(
+        {
+            "toolkit_id": TOOLKIT_ID,
+            "capability": capability,
+            "processed": {
+                "run_id": request["platform_run_id"],
+                "tool_call_id": request["platform_tool_call_id"],
+                "trace_ref": request["platform_trace_id"],
+                "status": "failed",
+                "output": {
+                    "rehearsal_only": True,
+                    "execution_performed": False,
+                },
+                "artifact_refs": [],
+                "usage_metrics": {
+                    "dry_run": True,
+                    "network_mutation": False,
+                },
+                "error_code": "platform_core.local_loop_rehearsal_not_executed",
+                "error_message": "The local loop rehearsal package does not enqueue, execute, or mutate Platform Core.",
+            },
+        },
+        request=request,
+    )
+    audit_event_template = build_platform_core_learning_audit_event(
+        {
+            "request": request,
+            "completion": {
+                "processed": {
+                    "run_id": request["platform_run_id"],
+                    "tool_call_id": request["platform_tool_call_id"],
+                    "trace_ref": request["platform_trace_id"],
+                    "status": "failed",
+                    "usage_metrics": {"dry_run": True},
+                    "artifact_refs": [],
+                    "error_code": "platform_core.local_loop_rehearsal_not_executed",
+                }
+            },
+        }
+    )
+    package = {
+        "schema": SCHEMA,
+        "contract": "platform_core_local_loop_rehearsal_package.v0",
+        "toolkit_id": TOOLKIT_ID,
+        "version": manifest.get("version"),
+        "status": "rehearsal_only",
+        "tenant_id": tenant_id,
+        "dry_run": True,
+        "network_mutation": False,
+        "execution_performed": False,
+        "platform_core_repository_mutation": False,
+        "source_manifest": {
+            "path": _repo_relative_path(manifest_path),
+            "sha256": _file_sha256(manifest_path),
+        },
+        "handoff_sequence": [
+            "manifest_registration_dry_run",
+            "platform_core_request_normalization",
+            "agentctl_runspec_enqueue_preview",
+            "external_worker_heartbeat_lease_execute_complete",
+            "platform_core_completion_normalization",
+            "learning_audit_metadata_preview",
+        ],
+        "manifest_registration_dry_run": build_platform_core_manifest_registration_dry_run(
+            manifest_path,
+            tenant_id=tenant_id,
+        ),
+        "platform_core_request": request,
+        "agentctl_envelope": platform_core_envelope_to_agentctl(request),
+        "runspec_enqueue_preview": build_runspec_enqueue_payload(
+            tenant_id=tenant_id,
+            capability=capability,
+            input_payload=selected_input,
+            artifact_refs=selected_artifact_refs,
+            trace_id="trace_p1_7_platform_core_rehearsal",
+            draft_id="runspecdraft_p1_7_platform_core_rehearsal",
+        ),
+        "completion_template": completion_template,
+        "audit_event_template": audit_event_template,
+        "worker_contract": {
+            "execution_model": "external_video_toolkit_worker",
+            "artifact_contract": "artifact_ref_only",
+            "heavy_media_inside_platform_core": False,
+            "expected_worker_metadata": [
+                "trace_ref",
+                "usage_metrics",
+                "execution_backend",
+                "artifact_lifecycle_summary",
+            ],
+        },
+        "remaining_platform_core_gates": [
+            "explicit_product_adapter_onboarding",
+            "tool_catalog_import_action",
+            "tenant_rollout_allowlist",
+            "service_account_and_artifact_byte_endpoint",
+            "runspec_queue_dispatch_policy",
+            "learning_audit_ingestion_policy",
+            "release_center_publish_or_rollback_policy",
+        ],
+    }
+    return _caller_safe(package)
+
+
 def build_platform_core_release_dossier(
     manifest_path: str | Path = DEFAULT_P1_MANIFEST_PATH,
     *,
@@ -694,9 +924,7 @@ def build_platform_core_completion(
 ) -> dict[str, Any]:
     """Normalize local agentctl/worker output into a Platform Core completion."""
 
-    processed = local_result.get("processed")
-    if not isinstance(processed, Mapping):
-        processed = local_result.get("result") if isinstance(local_result.get("result"), Mapping) else {}
+    processed = _completion_processed(local_result)
     request = request or {}
     toolkit_id = (
         _optional_string(local_result.get("toolkit_id"))
@@ -721,9 +949,12 @@ def build_platform_core_completion(
         "status": status,
         "output": processed.get("output") if isinstance(processed.get("output"), Mapping) else {},
         "artifact_refs": _public_artifact_refs(processed.get("artifact_refs")),
-        "usage_metrics": _mapping_or_empty(processed.get("usage_metrics")),
+        "usage_metrics": _mapping_or_empty(processed.get("usage_metrics"))
+        or _mapping_or_empty(_mapping_or_empty(local_result.get("metadata")).get("usage_metrics"))
+        or _mapping_or_empty(local_result.get("usage_metrics")),
         "trace_ref": _optional_string(processed.get("trace_ref"))
         or _optional_string(local_result.get("trace_ref"))
+        or _optional_string(_mapping_or_empty(local_result.get("metadata")).get("trace_ref"))
         or _optional_string(request.get("trace_ref"))
         or _optional_string(request.get("trace_id")),
         "error_code": _optional_string(processed.get("error_code"))
@@ -732,7 +963,43 @@ def build_platform_core_completion(
         or _optional_string(local_result.get("error_message")),
         "artifact_contract": "artifact_ref_only",
     }
+    artifact_lifecycle_summary = _completion_artifact_lifecycle_summary(local_result, processed)
+    if artifact_lifecycle_summary:
+        completion["artifact_lifecycle_summary"] = artifact_lifecycle_summary
     return _caller_safe(completion)
+
+
+def _completion_processed(local_result: Mapping[str, Any]) -> dict[str, Any]:
+    processed = local_result.get("processed")
+    if isinstance(processed, Mapping):
+        return dict(processed)
+    result = local_result.get("result")
+    if isinstance(result, Mapping):
+        nested_processed = result.get("processed")
+        if isinstance(nested_processed, Mapping):
+            return dict(nested_processed)
+        if isinstance(result.get("output"), Mapping):
+            return dict(result)
+    if isinstance(local_result.get("output"), Mapping):
+        return dict(local_result)
+    return {}
+
+
+def _completion_artifact_lifecycle_summary(
+    local_result: Mapping[str, Any],
+    processed: Mapping[str, Any],
+) -> dict[str, Any]:
+    candidates = [
+        _mapping_or_empty(_mapping_or_empty(local_result.get("metadata")).get("artifact_lifecycle_summary")),
+        _mapping_or_empty(local_result.get("artifact_lifecycle_summary")),
+        _mapping_or_empty(_mapping_or_empty(local_result.get("result")).get("artifact_lifecycle_summary")),
+        _mapping_or_empty(processed.get("artifact_lifecycle_summary")),
+        _mapping_or_empty(_mapping_or_empty(processed.get("output")).get("artifact_lifecycle_summary")),
+    ]
+    for candidate in candidates:
+        if candidate:
+            return _caller_safe(candidate)
+    return {}
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -749,6 +1016,15 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--release-manifest", default=str(DEFAULT_P1_MANIFEST_PATH), help="Manifest used for --release-dossier.")
     parser.add_argument("--git-revision", help="Git revision to include in --release-dossier.")
     parser.add_argument("--qa-report-ref", action="append", default=[], help="QA report artifact ref/name to include in --release-dossier.")
+    parser.add_argument("--manifest-registration-dry-run", action="store_true", help="Print a no-mutation Platform Core manifest registration rehearsal.")
+    parser.add_argument("--registration-manifest", default=str(DEFAULT_P1_MANIFEST_PATH), help="Manifest used for --manifest-registration-dry-run.")
+    parser.add_argument("--registration-tenant-id", default="platform_review", help="Tenant id for --manifest-registration-dry-run.")
+    parser.add_argument("--local-loop-package", action="store_true", help="Print a no-mutation Platform Core local loop rehearsal package.")
+    parser.add_argument("--loop-manifest", default=str(DEFAULT_P1_MANIFEST_PATH), help="Manifest used for --local-loop-package.")
+    parser.add_argument("--loop-tenant-id", default="platform_review", help="Tenant id for --local-loop-package.")
+    parser.add_argument("--loop-capability", default="video.project_edit.create_project", help="Capability used in --local-loop-package.")
+    parser.add_argument("--loop-input-json", help="Input object used in --local-loop-package.")
+    parser.add_argument("--artifact-ref-json", action="append", default=[], help="Caller-safe artifact_ref object used in --local-loop-package.")
     parser.add_argument("--input-json", help="Platform Core run request to normalize. Defaults to stdin.")
     parser.add_argument("--completion-json", help="Local result JSON to normalize as a Platform Core completion.")
     parser.add_argument("--base-url", default=DEFAULT_PLATFORM_CORE_BASE_URL, help="Platform Core base URL.")
@@ -805,6 +1081,24 @@ def main(argv: Sequence[str] | None = None) -> int:
             args.release_manifest,
             git_revision=args.git_revision,
             qa_report_refs=args.qa_report_ref,
+        )
+    elif args.manifest_registration_dry_run:
+        payload = build_platform_core_manifest_registration_dry_run(
+            args.registration_manifest,
+            tenant_id=args.registration_tenant_id,
+        )
+    elif args.local_loop_package:
+        payload = build_platform_core_local_loop_rehearsal_package(
+            args.loop_manifest,
+            tenant_id=args.loop_tenant_id,
+            capability=args.loop_capability,
+            input_payload=_load_json_text(args.loop_input_json)
+            if args.loop_input_json
+            else None,
+            artifact_refs=[
+                _load_json_text(raw_ref)
+                for raw_ref in args.artifact_ref_json
+            ],
         )
     elif args.onboarding_bundle:
         payload = build_platform_core_onboarding_bundle(
@@ -949,6 +1243,16 @@ def _capability_listing(item: Mapping[str, Any]) -> dict[str, Any]:
         "input_schema": item.get("input_schema"),
         "output_schema": item.get("output_schema"),
     }
+
+
+def _registration_capability_enum(registration_payload: Mapping[str, Any]) -> list[str]:
+    tool_schema = _mapping_or_empty(registration_payload.get("tool_schema"))
+    properties = _mapping_or_empty(tool_schema.get("properties"))
+    capability = _mapping_or_empty(properties.get("capability"))
+    values = capability.get("enum")
+    if not isinstance(values, list):
+        return []
+    return sorted(item for item in values if isinstance(item, str) and item)
 
 
 def _audit_artifact_refs(refs: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:

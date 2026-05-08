@@ -38,6 +38,7 @@ from video_editing_toolkit.agentctl_worker_runner import (
 from video_editing_toolkit.storage import (
     ArtifactMaterializationConfig,
     ArtifactMaterializationError,
+    ArtifactMaterializationSummary,
     LocalArtifactStore,
     materialize_artifact_refs,
 )
@@ -444,12 +445,13 @@ class VideoToolkitAgentctlWorker:
                 config=self.config.execution_policy_config(),
             )
             artifact_store = LocalArtifactStore(self.config.artifact_root)
-            materialize_artifact_refs(
+            materialization_summary = materialize_artifact_refs(
                 envelope,
                 artifact_store=artifact_store,
                 config=self.config.materialization_config(),
                 fetch_bytes=self.artifact_fetcher,
             )
+            artifact_lifecycle_summary = _artifact_lifecycle_summary(materialization_summary)
             if self._runtime_cancel_requested(job):
                 return _worker_error_result(
                     status="failed",
@@ -462,6 +464,7 @@ class VideoToolkitAgentctlWorker:
                     max_attempts=self.config.max_attempts,
                     trace_ref=trace_ref,
                     extra_output={"cancelled": True},
+                    artifact_lifecycle_summary=artifact_lifecycle_summary,
                 )
             local_result = _invoke_local_runner(
                 self.local_runner,
@@ -496,6 +499,7 @@ class VideoToolkitAgentctlWorker:
                 "usage_metrics": usage_metrics,
                 "attempt": attempt,
                 "max_attempts": self.config.max_attempts,
+                "artifact_lifecycle_summary": artifact_lifecycle_summary,
                 "output": local_result,
                 "error": None
                 if status == "completed"
@@ -574,6 +578,7 @@ class VideoToolkitAgentctlWorker:
                 trace_ref=trace_ref,
             )
         except ArtifactMaterializationError as exc:
+            artifact_lifecycle_summary = _failed_artifact_lifecycle_summary(exc)
             return _worker_error_result(
                 status="failed",
                 execution_mode=self.config.execution_mode,
@@ -585,6 +590,7 @@ class VideoToolkitAgentctlWorker:
                 max_attempts=self.config.max_attempts,
                 trace_ref=trace_ref,
                 extra_output={"artifact_id": exc.artifact_id},
+                artifact_lifecycle_summary=artifact_lifecycle_summary,
             )
         except Exception as exc:
             return _worker_error_result(
@@ -628,6 +634,9 @@ class VideoToolkitAgentctlWorker:
                 },
             },
         }
+        artifact_lifecycle_summary = result.get("artifact_lifecycle_summary")
+        if isinstance(artifact_lifecycle_summary, Mapping):
+            body["metadata"]["artifact_lifecycle_summary"] = dict(artifact_lifecycle_summary)
         return self.client.post(
             f"/runtime/backends/jobs/{job_id}/complete",
             _caller_safe(body, token=self.config.token, extra_tokens=(self.config.artifact_token,)),
@@ -937,6 +946,40 @@ def _summarize_completion(value: Any) -> Any:
     }
 
 
+def _artifact_lifecycle_summary(
+    summary: ArtifactMaterializationSummary,
+) -> dict[str, Any]:
+    return {
+        "contract": "video_editing_toolkit.worker_artifact_lifecycle_summary.v0",
+        "stage": "input_materialization",
+        "status": "completed" if summary.requested_count else "not_requested",
+        "requested_count": summary.requested_count,
+        "materialized_count": summary.materialized_count,
+        "cached_count": summary.cached_count,
+        "artifact_ids": list(summary.artifact_ids),
+        "local_paths_returned": False,
+        "storage_uri_returned": False,
+    }
+
+
+def _failed_artifact_lifecycle_summary(
+    exc: ArtifactMaterializationError,
+) -> dict[str, Any]:
+    artifact_ids = [exc.artifact_id] if exc.artifact_id else []
+    return {
+        "contract": "video_editing_toolkit.worker_artifact_lifecycle_summary.v0",
+        "stage": "input_materialization",
+        "status": "failed",
+        "requested_count": len(artifact_ids),
+        "materialized_count": 0,
+        "cached_count": 0,
+        "artifact_ids": artifact_ids,
+        "error_code": exc.error_code,
+        "local_paths_returned": False,
+        "storage_uri_returned": False,
+    }
+
+
 def _worker_error_result(
     *,
     status: str,
@@ -949,6 +992,7 @@ def _worker_error_result(
     max_attempts: int,
     trace_ref: str | None,
     extra_output: Mapping[str, Any] | None = None,
+    artifact_lifecycle_summary: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     safe_message = _safe_error_message(error_message)
     usage_metrics = _worker_usage_metrics(
@@ -971,7 +1015,7 @@ def _worker_error_result(
     }
     if extra_output:
         output.update(dict(extra_output))
-    return {
+    result = {
         "status": status,
         "execution_mode": execution_mode,
         "execution_backend": execution_mode,
@@ -982,6 +1026,11 @@ def _worker_error_result(
         "output": output,
         "error": safe_message,
     }
+    if artifact_lifecycle_summary is not None:
+        summary = dict(artifact_lifecycle_summary)
+        output["artifact_lifecycle_summary"] = summary
+        result["artifact_lifecycle_summary"] = summary
+    return result
 
 
 def _worker_usage_metrics(

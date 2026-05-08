@@ -270,3 +270,38 @@ Safety rules:
 4. Local paths, worker paths, argv, stderr, env, raw commands, and secret-like fields are stripped or redacted.
 5. Artifact bytes still require the P0.11/P0.12 worker materialization contract and an authorized byte endpoint.
 ```
+
+## P1.7 Platform Core Rehearsal Package
+
+P1.7 keeps the same boundary: this repository only prepares local handoff
+contracts. Real Tool Catalog import, RunSpec dispatch, artifact byte endpoint
+authz, service account issuance, tenant rollout, learning/audit ingestion, and
+Release Center publish or rollback remain Platform Core product-side actions.
+
+New local JSON-only commands:
+
+```powershell
+py -m video_editing_toolkit.platform_core --manifest-registration-dry-run
+py -m video_editing_toolkit.platform_core --local-loop-package
+```
+
+`--manifest-registration-dry-run` previews a Platform Core registration payload
+from the P1 manifest without network mutation. Only P0-enabled capabilities are
+invokable; disabled P1 capabilities stay review-only.
+
+`--local-loop-package` bundles the intended closed-loop handoff sequence without
+executing it:
+
+```text
+manifest registration dry-run
+Platform Core request normalization
+agentctl envelope preview
+RunSpec enqueue preview
+external worker heartbeat/lease/execute/complete contract
+Platform Core completion normalization
+learning/audit metadata preview
+```
+
+Worker completions now also carry caller-safe `artifact_lifecycle_summary`
+metadata when input artifact refs are materialized or reused from cache. The
+summary includes only status, counts, and artifact ids.

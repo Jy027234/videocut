@@ -13,6 +13,8 @@ from video_editing_toolkit.agentctl import run_agentctl
 from video_editing_toolkit.platform_core import (
     build_platform_core_completion,
     build_platform_core_learning_audit_event,
+    build_platform_core_local_loop_rehearsal_package,
+    build_platform_core_manifest_registration_dry_run,
     build_platform_core_onboarding_bundle,
     build_platform_core_release_dossier,
     build_platform_core_toolkit_descriptor,
@@ -192,6 +194,68 @@ def test_platform_core_release_dossier_is_review_only_and_hash_bound() -> None:
     assert_no_public_path_or_command_leak(dossier)
 
 
+def test_platform_core_manifest_registration_dry_run_preserves_disabled_p1() -> None:
+    dry_run = build_platform_core_manifest_registration_dry_run(
+        tenant_id="tenant_platform_review",
+    )
+
+    assert dry_run["contract"] == "platform_core_manifest_registration_dry_run.v0"
+    assert dry_run["status"] == "review_only"
+    assert dry_run["tenant_id"] == "tenant_platform_review"
+    assert dry_run["dry_run"] is True
+    assert dry_run["network_mutation"] is False
+    assert dry_run["publishable"] is False
+    assert dry_run["platform_core_boundaries"]["write_platform_core_repository"] is False
+    assert dry_run["platform_core_boundaries"]["register_tool_catalog"] is False
+    assert "modify_platform_core_repository" in dry_run["blocked_actions"]
+
+    invokable = set(dry_run["registration_preview"]["invokable_capabilities"])
+    review_only = {
+        item["capability"]
+        for item in dry_run["capability_matrix"]["p1_review_only_capabilities"]
+    }
+    assert "video.project_edit.create_project" in invokable
+    assert "audio.tts.generate_voiceover" in review_only
+    assert not invokable.intersection(review_only)
+    assert dry_run["activation_policy"]["default_route_table"] == "p0_only"
+    assert dry_run["activation_policy"]["enable_p1_disabled_capabilities"] is False
+    assert_no_public_path_or_command_leak(dry_run)
+
+
+def test_platform_core_local_loop_rehearsal_package_is_no_mutation_and_caller_safe() -> None:
+    package = build_platform_core_local_loop_rehearsal_package(
+        tenant_id="tenant_loop",
+        artifact_refs=[
+            {
+                "artifact_id": "artifact_loop_source",
+                "artifact_type": "source_video",
+                "mime_type": "video/mp4",
+                "size_bytes": 123,
+                "checksum": "sha256:" + "c" * 64,
+                "download_url": "/toolkit-artifacts/artifact_loop_source/bytes?sat=secret-token",
+                "storage_uri": "s3://internal/private/source.mp4",
+            }
+        ],
+    )
+    rendered = json.dumps(package, sort_keys=True)
+
+    assert package["contract"] == "platform_core_local_loop_rehearsal_package.v0"
+    assert package["status"] == "rehearsal_only"
+    assert package["dry_run"] is True
+    assert package["network_mutation"] is False
+    assert package["execution_performed"] is False
+    assert package["platform_core_repository_mutation"] is False
+    assert package["manifest_registration_dry_run"]["network_mutation"] is False
+    assert package["agentctl_envelope"]["run_id"] == "platform_run_p1_7_rehearsal"
+    assert package["runspec_enqueue_preview"]["dispatch_mode"] == "enqueue"
+    assert package["completion_template"]["error_code"] == "platform_core.local_loop_rehearsal_not_executed"
+    assert package["audit_event_template"]["data_minimization"]["raw_input_logged"] is False
+    assert "artifact_lifecycle_summary" in package["worker_contract"]["expected_worker_metadata"]
+    assert "secret-token" not in rendered
+    assert "storage_uri" not in rendered
+    assert_no_public_path_or_command_leak(package)
+
+
 def test_platform_core_request_normalizes_to_agentctl_envelope_without_storage_internals(
     tmp_path: Path,
 ) -> None:
@@ -269,6 +333,66 @@ def test_platform_core_completion_wraps_local_agentctl_result(tmp_path: Path) ->
     assert completion["trace_ref"] == "trace_platform_completion"
     assert completion["output"]["project_id"] == "proj_platform_completion"
     assert completion["artifact_contract"] == "artifact_ref_only"
+    assert_no_public_path_or_command_leak(completion)
+
+
+def test_platform_core_completion_extracts_worker_artifact_lifecycle_metadata() -> None:
+    request = {
+        "platform_run_id": "platform_run_worker_completion",
+        "platform_tool_call_id": "platform_tool_call_worker_completion",
+        "trace_id": "trace_platform_worker_completion",
+        "toolkit_id": "video-editing-toolkit",
+        "capability": "video.asset_ingest.build_asset_index",
+    }
+    worker_completion_body = {
+        "worker_id": "video-worker-test",
+        "lease_id": "lease_worker_test",
+        "status": "completed",
+        "result": {
+            "schema": "video_editing_toolkit.agentctl.local_run.v0",
+            "ok": True,
+            "processed": {
+                "run_id": "platform_run_worker_completion",
+                "tool_call_id": "platform_tool_call_worker_completion",
+                "trace_ref": "trace_platform_worker_completion",
+                "status": "succeeded",
+                "output": {"asset_count": 1},
+                "artifact_refs": [
+                    {
+                        "artifact_id": "artifact_index",
+                        "artifact_type": "asset_index",
+                        "mime_type": "application/json",
+                        "size_bytes": 12,
+                        "checksum": "sha256:" + "d" * 64,
+                    }
+                ],
+            },
+        },
+        "metadata": {
+            "trace_ref": "trace_platform_worker_completion",
+            "usage_metrics": {"worker_runtime_ms": 3.5},
+            "artifact_lifecycle_summary": {
+                "contract": "video_editing_toolkit.worker_artifact_lifecycle_summary.v0",
+                "stage": "input_materialization",
+                "status": "completed",
+                "requested_count": 1,
+                "materialized_count": 1,
+                "cached_count": 0,
+                "artifact_ids": ["artifact_source"],
+                "local_paths_returned": False,
+                "storage_uri_returned": False,
+            },
+        },
+    }
+
+    completion = build_platform_core_completion(worker_completion_body, request=request)
+
+    assert completion["status"] == "succeeded"
+    assert completion["output"] == {"asset_count": 1}
+    assert completion["usage_metrics"] == {"worker_runtime_ms": 3.5}
+    assert completion["artifact_refs"][0]["artifact_id"] == "artifact_index"
+    assert completion["artifact_lifecycle_summary"]["status"] == "completed"
+    assert completion["artifact_lifecycle_summary"]["artifact_ids"] == ["artifact_source"]
     assert_no_public_path_or_command_leak(completion)
 
 
@@ -363,4 +487,52 @@ def test_platform_core_cli_release_dossier_outputs_json() -> None:
     assert payload["contract"] == "platform_core_release_dossier.v0"
     assert payload["git_revision"] == "rev_cli_release"
     assert payload["publishable"] is False
+    assert_no_public_path_or_command_leak(payload)
+
+
+def test_platform_core_cli_manifest_registration_dry_run_outputs_json() -> None:
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "video_editing_toolkit.platform_core",
+            "--manifest-registration-dry-run",
+            "--registration-tenant-id",
+            "tenant_cli_registration",
+        ],
+        text=True,
+        capture_output=True,
+        check=False,
+        env={**os.environ, "PYTHONPATH": str(Path(__file__).resolve().parents[1] / "src")},
+    )
+
+    assert completed.returncode == 0
+    payload = json.loads(completed.stdout)
+    assert payload["contract"] == "platform_core_manifest_registration_dry_run.v0"
+    assert payload["tenant_id"] == "tenant_cli_registration"
+    assert payload["network_mutation"] is False
+    assert_no_public_path_or_command_leak(payload)
+
+
+def test_platform_core_cli_local_loop_package_outputs_json() -> None:
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "video_editing_toolkit.platform_core",
+            "--local-loop-package",
+            "--loop-tenant-id",
+            "tenant_cli_loop",
+        ],
+        text=True,
+        capture_output=True,
+        check=False,
+        env={**os.environ, "PYTHONPATH": str(Path(__file__).resolve().parents[1] / "src")},
+    )
+
+    assert completed.returncode == 0
+    payload = json.loads(completed.stdout)
+    assert payload["contract"] == "platform_core_local_loop_rehearsal_package.v0"
+    assert payload["tenant_id"] == "tenant_cli_loop"
+    assert payload["execution_performed"] is False
     assert_no_public_path_or_command_leak(payload)

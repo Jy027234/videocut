@@ -222,6 +222,18 @@ py -m video_editing_toolkit.platform_core --input-json $request
 P0.15 is still interface reservation only: it does not call a live Platform
 Core service, upload bytes, or bypass Platform Core authorization.
 
+Generate P1.7 no-mutation Platform Core rehearsal payloads:
+
+```powershell
+py -m video_editing_toolkit.platform_core --manifest-registration-dry-run
+py -m video_editing_toolkit.platform_core --local-loop-package
+```
+
+These payloads preserve P1 disabled capability status and preview the future
+Platform Core + agentctl + external worker loop without registering tools,
+enqueueing jobs, downloading artifacts, publishing releases, or modifying the
+Platform Core repository.
+
 ## Docker Worker
 
 Build and run the local worker image:

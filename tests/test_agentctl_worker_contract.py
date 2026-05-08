@@ -85,6 +85,17 @@ def test_worker_executes_leased_no_upload_job_and_completes(tmp_path: Path) -> N
     assert complete_body["metadata"]["usage_metrics"]["attempt"] == 1
     assert complete_body["metadata"]["usage_metrics"]["max_attempts"] == 1
     assert "worker_runtime_ms" in complete_body["metadata"]["usage_metrics"]
+    assert complete_body["metadata"]["artifact_lifecycle_summary"] == {
+        "contract": "video_editing_toolkit.worker_artifact_lifecycle_summary.v0",
+        "stage": "input_materialization",
+        "status": "not_requested",
+        "requested_count": 0,
+        "materialized_count": 0,
+        "cached_count": 0,
+        "artifact_ids": [],
+        "local_paths_returned": False,
+        "storage_uri_returned": False,
+    }
     assert_no_public_path_or_command_leak(result)
     assert_no_public_path_or_command_leak(complete_body)
 
@@ -609,7 +620,68 @@ def test_worker_materializes_artifact_ref_before_running_job(tmp_path: Path) -> 
     assert agentctl_output["ok"] is True
     assert agentctl_output["processed"]["output"]["asset_count"] == 1
     assert agentctl_output["processed"]["output"]["input_artifact_refs"][0]["artifact_id"] == artifact_id
+    assert complete_body["metadata"]["artifact_lifecycle_summary"] == {
+        "contract": "video_editing_toolkit.worker_artifact_lifecycle_summary.v0",
+        "stage": "input_materialization",
+        "status": "completed",
+        "requested_count": 1,
+        "materialized_count": 1,
+        "cached_count": 0,
+        "artifact_ids": [artifact_id],
+        "local_paths_returned": False,
+        "storage_uri_returned": False,
+    }
     assert "worker-token" not in json.dumps(result, sort_keys=True)
+    assert_no_public_path_or_command_leak(result)
+    assert_no_public_path_or_command_leak(complete_body)
+
+
+def test_worker_reports_cached_artifact_lifecycle_without_fetching(tmp_path: Path) -> None:
+    content = b"cached worker input bytes"
+    artifact_id = "artifact_worker_cached"
+    store = LocalArtifactStore(tmp_path / "worker-artifacts")
+    store.put_bytes(
+        content=content,
+        artifact_id=artifact_id,
+        artifact_type="source_video",
+        owner_tenant_id="tenant_worker",
+        created_by_run_id="run_source",
+        filename="input.mp4",
+        mime_type="video/mp4",
+    )
+    job = _leased_job(
+        job_id="rtjob_worker_cached",
+        capability="video.asset_ingest.build_asset_index",
+        input_payload={
+            "project_id": "proj_worker_cached",
+            "artifact_ids": [artifact_id],
+        },
+        artifact_refs=[_artifact_ref(artifact_id=artifact_id, content=content)],
+    )
+    fake = FakeAgentctlWorkerClient(lease_job=job)
+    fetcher = FakeArtifactBytesFetcher({})
+    worker = VideoToolkitAgentctlWorker(
+        _config(tmp_path, artifact_base_url="http://platform.local"),
+        client=fake,
+        artifact_fetcher=fetcher,
+    )
+
+    result = worker.run_once()
+    complete_body = fake.requests[-1]["body"]
+
+    assert result["ok"] is True
+    assert fetcher.requests == []
+    assert complete_body["metadata"]["artifact_lifecycle_summary"] == {
+        "contract": "video_editing_toolkit.worker_artifact_lifecycle_summary.v0",
+        "stage": "input_materialization",
+        "status": "completed",
+        "requested_count": 1,
+        "materialized_count": 0,
+        "cached_count": 1,
+        "artifact_ids": [artifact_id],
+        "local_paths_returned": False,
+        "storage_uri_returned": False,
+    }
     assert_no_public_path_or_command_leak(result)
     assert_no_public_path_or_command_leak(complete_body)
 
@@ -696,6 +768,9 @@ def test_worker_reports_materialization_failure_without_leaking_download_url(tmp
     assert complete_body["result"]["error_code"] == "video_toolkit_worker.artifact_materialization_failed"
     assert complete_body["result"]["reason_code"] == "artifact_checksum_mismatch"
     assert complete_body["result"]["artifact_id"] == artifact_id
+    assert complete_body["metadata"]["artifact_lifecycle_summary"]["status"] == "failed"
+    assert complete_body["metadata"]["artifact_lifecycle_summary"]["error_code"] == "artifact_checksum_mismatch"
+    assert complete_body["metadata"]["artifact_lifecycle_summary"]["artifact_ids"] == [artifact_id]
     assert "http://platform.local/artifacts/download/input.mp4" not in json.dumps(result, sort_keys=True)
     assert "worker-token" not in json.dumps(result, sort_keys=True)
     assert_no_public_path_or_command_leak(result)

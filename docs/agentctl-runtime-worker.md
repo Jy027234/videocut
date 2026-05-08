@@ -202,6 +202,11 @@ trace and usage
   agentctl job trace_id is passed into the local toolkit envelope as trace_ref.
   Worker completion metadata carries trace_ref, usage_metrics, execution_backend, attempt, and max_attempts.
   Local runtime still records runtime_ms and adapter resource metadata when a toolkit run executes.
+
+artifact lifecycle
+  Worker completion metadata carries artifact_lifecycle_summary for input materialization.
+  The summary reports not_requested, completed, cached, or failed materialization through counts and artifact ids only.
+  It never exposes local artifact paths, storage locators, signed URLs, byte endpoints, or worker internals.
 ```
 
 ## Current Local Result

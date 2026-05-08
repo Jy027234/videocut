@@ -2,20 +2,22 @@
 
 Date: 2026-05-08
 
-Status: implemented local metadata contracts for the next Platform Core
-platformization slice. These contracts are metadata-only, review-only, and do
-not perform network mutation.
+Status: implemented local metadata and rehearsal contracts for the next
+Platform Core platformization slice. These contracts are metadata-only,
+review-only, and do not perform network mutation.
 
 ## Scope
 
 This document defines the metadata handoff contracts for moving the video
 editing toolkit from local P0/P1 contract rehearsal toward Platform Core review.
 They are implemented in `video_editing_toolkit.platform_core` and exposed by the
-`video-toolkit-platform-core` CLI. It covers three payload families:
+`video-toolkit-platform-core` CLI. It covers five payload families:
 
 - onboarding bundle
 - learning audit event
 - release dossier
+- manifest registration dry-run
+- local loop rehearsal package
 
 The contracts describe what a future Platform Core review flow may ingest. They
 do not register tools, publish releases, execute capabilities, upload bytes,
@@ -203,6 +205,55 @@ Example shape:
 }
 ```
 
+## Manifest Registration Dry-Run
+
+Contract name: `platform_core_manifest_registration_dry_run.v0`
+
+Purpose: preview Platform Core Tool Catalog import from the P1 manifest without
+posting to Platform Core, agentctl, Release Center, or any product service.
+
+The dry-run keeps the default route table `p0_only`. Enabled P0 capabilities are
+listed as invokable, while P1 capabilities remain `p1_review_only` and disabled.
+It also carries explicit boundaries:
+
+```json
+{
+  "dry_run": true,
+  "network_mutation": false,
+  "publishable": false,
+  "activation_policy": {
+    "default_route_table": "p0_only",
+    "preserve_manifest_status": true,
+    "enable_p1_disabled_capabilities": false,
+    "requires_platform_core_product_review": true
+  },
+  "platform_core_boundaries": {
+    "write_platform_core_repository": false,
+    "register_tool_catalog": false,
+    "publish_release_center": false,
+    "upload_artifact_bytes": false
+  }
+}
+```
+
+## Local Loop Rehearsal Package
+
+Contract name: `platform_core_local_loop_rehearsal_package.v0`
+
+Purpose: bundle the local handoff sequence for review without running it. The
+package links the manifest registration dry-run, a sample Platform Core request,
+the normalized agentctl envelope, a RunSpec enqueue preview, a completion
+template, and a learning/audit metadata preview.
+
+The package is not a worker launcher. It does not enqueue a job, upload or
+download bytes, call Platform Core, call agentctl, or mark any capability
+available. It exists so the future cloud integration can compare shapes before
+the product-side rollout.
+
+Worker completions may include caller-safe `artifact_lifecycle_summary`
+metadata. The summary records input materialization counts and artifact ids only;
+it never includes local paths, storage locators, signed URLs, or worker internals.
+
 ## Implemented Commands
 
 The local CLI emits JSON only and does not call Platform Core:
@@ -211,6 +262,8 @@ The local CLI emits JSON only and does not call Platform Core:
 video-toolkit-platform-core --onboarding-bundle
 video-toolkit-platform-core --audit-event-json '<json request/completion payload>'
 video-toolkit-platform-core --release-dossier --git-revision <revision>
+video-toolkit-platform-core --manifest-registration-dry-run
+video-toolkit-platform-core --local-loop-package
 ```
 
 These commands are intended for future Product Adapter, learning/audit, and

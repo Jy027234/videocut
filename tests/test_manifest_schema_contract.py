@@ -151,7 +151,7 @@ def test_p0_and_p1_manifests_validate_against_toolkit_manifest_schema() -> None:
     validator.validate(p0_manifest)
     validator.validate(p1_manifest)
     assert p0_manifest["version"].endswith("-p0")
-    assert p1_manifest["version"].endswith("-p1.6")
+    assert p1_manifest["version"].endswith("-p1.7")
 
 
 def test_p1_manifest_extends_p0_without_default_enabling_p1_or_sensitive_capabilities() -> None:
@@ -178,6 +178,13 @@ def test_p1_manifest_extends_p0_without_default_enabling_p1_or_sensitive_capabil
     assert {entry["status"] for entry in p1_entries.values()} == {"disabled"}
     assert p1_entries["audio.tts.generate_voiceover"]["sandbox_policy"]["download_models"] is False
     assert p1_entries["audio.tts.generate_voiceover"]["sandbox_policy"]["voice_cloning"] == "disabled"
+    assert p1_manifest["sandbox_policy"]["p1_7_platform_core_handoff"] == {
+        "manifest_registration": "dry_run_only",
+        "local_loop_rehearsal": "no_network_mutation",
+        "platform_core_repository_mutation": False,
+        "enable_p1_disabled_capabilities": False,
+        "product_side_rollout_required": True,
+    }
     assert (
         p1_entries["video.qc.build_evidence_packet"]["sandbox_policy"]["p1_3_runtime_mode"]
         == "contract_only_until_adapter_enabled"
