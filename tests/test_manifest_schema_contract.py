@@ -68,6 +68,7 @@ P1_DRAFT_CAPABILITIES = {
     "audio.tts.generate_voiceover",
     "video.qc.generate_report",
     "video.qc.build_evidence_packet",
+    "video.qc.plan_media_inspection",
     "video.template.validate_remotion_template",
     "video.template.create_remotion_render_job",
     "video.render.export_project_format",
@@ -150,7 +151,7 @@ def test_p0_and_p1_manifests_validate_against_toolkit_manifest_schema() -> None:
     validator.validate(p0_manifest)
     validator.validate(p1_manifest)
     assert p0_manifest["version"].endswith("-p0")
-    assert p1_manifest["version"].endswith("-p1.1")
+    assert p1_manifest["version"].endswith("-p1.5")
 
 
 def test_p1_manifest_extends_p0_without_default_enabling_p1_or_sensitive_capabilities() -> None:
@@ -181,6 +182,10 @@ def test_p1_manifest_extends_p0_without_default_enabling_p1_or_sensitive_capabil
         p1_entries["video.qc.build_evidence_packet"]["sandbox_policy"]["p1_3_runtime_mode"]
         == "contract_only_until_adapter_enabled"
     )
+    assert p1_entries["video.qc.plan_media_inspection"]["sandbox_policy"]["p1_5_runtime_mode"] == "plan_only"
+    assert p1_entries["video.qc.plan_media_inspection"]["sandbox_policy"]["download_media"] is False
+    assert p1_entries["video.qc.plan_media_inspection"]["sandbox_policy"]["run_ffmpeg"] is False
+    assert p1_entries["video.qc.plan_media_inspection"]["sandbox_policy"]["run_opencv"] is False
     assert p1_entries["video.template.validate_remotion_template"]["sandbox_policy"]["run_chromium"] is False
     assert p1_entries["video.template.create_remotion_render_job"]["sandbox_policy"]["run_chromium"] is False
     assert p1_entries["video.render.export_project_format"]["sandbox_policy"]["supported_formats"] == [

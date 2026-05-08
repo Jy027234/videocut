@@ -21,6 +21,8 @@ from video_editing_toolkit.adapters.qc import (
     QC_EVIDENCE_PACKET_ARTIFACT_TYPE,
     QC_EVIDENCE_PACKET_SCHEMA,
     GENERATE_QC_REPORT,
+    PLAN_MEDIA_INSPECTION,
+    QC_MEDIA_INSPECTION_PLAN_SCHEMA,
     QC_REPORT_ARTIFACT_TYPE,
     QC_REPORT_SCHEMA,
 )
@@ -362,6 +364,70 @@ def test_qc_evidence_packet_omits_path_storage_and_download_token_inputs(tmp_pat
     assert result.output["qc_evidence_packet"]["summary"]["profile"] == "1080x1920"
 
 
+def test_qc_media_inspection_plan_is_plan_only_and_caller_safe(tmp_path: Path) -> None:
+    artifact_ref = {
+        "artifact_id": "artifact_qc_plan_source",
+        "artifact_type": "source_video",
+        "mime_type": "video/mp4",
+        "size_bytes": 1234,
+        "checksum": "sha256:" + "a" * 64,
+        "data_class": "sensitive",
+        "retention_policy": "short_lived",
+        "storage_uri": "s3://internal/private/source.mp4",
+        "download_url": "https://download.example/source.mp4?sat=secret-token",
+    }
+    payload = _passing_payload() | {
+        "_worker_media_path": str(tmp_path / "private" / "source.mp4"),
+        "artifact_ref": artifact_ref,
+        "media_probe": {
+            "duration_seconds": 10.1,
+            "storage_uri": "s3://internal/private/probe.json",
+            "download_url": "https://download.example/probe.json?sat=secret-token",
+            "streams": [
+                {"codec_type": "video", "width": 1080, "height": 1920, "avg_frame_rate": "30/1"},
+                {"codec_type": "audio"},
+            ],
+        },
+        "audio_quality": {"quality_summary": {"integrated_lufs": -16.0, "true_peak_dbtp": -1.2}},
+        "visual_quality": {"summary": {"black_frame_seconds": 0.0, "freeze_frame_seconds": 0.0}},
+    }
+
+    result = _run_qc(payload, capability=PLAN_MEDIA_INSPECTION)
+    rendered = json.dumps(result.output, sort_keys=True)
+
+    assert result.status == AdapterStatus.SUCCEEDED
+    assert result.artifact_refs == ()
+    plan = result.output["media_inspection_plan"]
+    assert plan["schema"] == QC_MEDIA_INSPECTION_PLAN_SCHEMA
+    assert plan["summary"]["plan_only"] is True
+    assert plan["summary"]["execution_enabled"] is False
+    assert plan["execution_policy"]["runtime_mode"] == "plan_only"
+    assert plan["execution_policy"]["media_fetch_enabled"] is False
+    assert plan["execution_policy"]["binary_probe_enabled"] is False
+    assert plan["execution_policy"]["frame_sampling_enabled"] is False
+    assert all(value == 0 for value in plan["runtime_invocation_counts"].values())
+    assert plan["source_artifact_refs"] == [
+        {
+            "artifact_id": "artifact_qc_plan_source",
+            "artifact_type": "source_video",
+            "mime_type": "video/mp4",
+            "size_bytes": 1234,
+            "checksum": "sha256:" + "a" * 64,
+            "data_class": "sensitive",
+            "retention_policy": "short_lived",
+        }
+    ]
+    assert "ffmpeg" not in rendered.casefold()
+    assert "opencv" not in rendered.casefold()
+    assert "download_url" not in rendered
+    assert "download.example" not in rendered
+    assert "secret-token" not in rendered
+    assert "storage_uri" not in rendered
+    assert "source.mp4" not in rendered
+    assert str(tmp_path) not in rendered
+    assert_no_public_path_or_command_leak(result.output)
+
+
 def test_qc_build_evidence_packet_resolves_through_p1_route() -> None:
     route = resolve_p1_experimental_route(BUILD_QC_EVIDENCE_PACKET)
     adapter = build_p1_experimental_adapter(BUILD_QC_EVIDENCE_PACKET)
@@ -400,6 +466,26 @@ def test_qc_generate_report_resolves_through_p1_route() -> None:
         assert "No adapter route registered" in str(exc)
     else:
         raise AssertionError("P1 QC should not resolve through the default P0 route table")
+
+
+def test_qc_media_inspection_plan_resolves_through_p1_route() -> None:
+    route = resolve_p1_experimental_route(PLAN_MEDIA_INSPECTION)
+    adapter = build_p1_experimental_adapter(PLAN_MEDIA_INSPECTION)
+
+    assert PLAN_MEDIA_INSPECTION not in CAPABILITY_ROUTES
+    assert PLAN_MEDIA_INSPECTION in P1_CAPABILITY_ROUTES
+    assert route.adapter_name == QCAdapter.adapter_name
+    assert route.adapter_class is QCAdapter
+    assert route.queue_topic == "video.qc.inspection_plan"
+    assert adapter.adapter_name == "qc"
+    assert adapter.supports(PLAN_MEDIA_INSPECTION)
+
+    try:
+        resolve_route(PLAN_MEDIA_INSPECTION)
+    except ValueError as exc:
+        assert "No adapter route registered" in str(exc)
+    else:
+        raise AssertionError("P1 QC plan should not resolve through the default P0 route table")
 
 
 def _run_qc(input_payload: dict[str, Any], *, capability: str = GENERATE_QC_REPORT):

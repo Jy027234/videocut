@@ -227,7 +227,7 @@ Routing lives in `src/video_editing_toolkit/adapters/routing.py`.
 
 P1 draft capabilities live behind explicit experimental routing helpers. They
 must stay disabled in the manifest until Platform Core rollout policy, approval
-gates, and resource limits are wired. The current P1.2 adapter surface is
+gates, and resource limits are wired. The current P1 adapter surface is
 preflight-only:
 
 | Capability | Adapter | Contract status |
@@ -235,6 +235,7 @@ preflight-only:
 | `audio.tts.generate_voiceover` | `moss_tts_nano` | `plan_only` and `preflight_only`; no download, no ONNX synthesis, no voice cloning. |
 | `video.qc.generate_report` | `qc` | Deterministic report from caller-safe timeline, probe, quality, and brand evidence. |
 | `video.qc.build_evidence_packet` | `qc` | Evidence packet descriptor and optional JSON artifact from caller-safe evidence only; no media inspection execution. |
+| `video.qc.plan_media_inspection` | `qc` | Plan-only media inspection contract; no media fetch, binary probe, frame sampling, audio analysis, or visual analysis execution. |
 | `video.template.validate_remotion_template` | `remotion` | Template metadata and prop validation only; no Node or Chromium execution. |
 | `video.template.create_remotion_render_job` | `remotion` | Dispatcher job descriptor and readiness checks only; no Remotion render execution. |
 | `video.render.export_project_format` | `project_export` | FCPXML interchange descriptor or artifact only; no DaVinci Resolve, Final Cut Pro, shell, or local app automation. |

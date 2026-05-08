@@ -14,13 +14,26 @@ from .base import AdapterRequest, AdapterResult, AdapterStatus, BaseAdapter
 
 GENERATE_QC_REPORT = "video.qc.generate_report"
 BUILD_QC_EVIDENCE_PACKET = "video.qc.build_evidence_packet"
+PLAN_MEDIA_INSPECTION = "video.qc.plan_media_inspection"
 QC_REPORT_SCHEMA = "video_editing_toolkit.qc_report.v0"
 QC_REPORT_ARTIFACT_TYPE = "qc_report_json"
 QC_EVIDENCE_PACKET_SCHEMA = "video_editing_toolkit.qc_evidence_packet.v0"
 QC_EVIDENCE_PACKET_ARTIFACT_TYPE = "qc_evidence_packet_json"
+QC_MEDIA_INSPECTION_PLAN_SCHEMA = "video_editing_toolkit.qc_media_inspection_plan.v0"
 _EPSILON = 0.000001
 _DEFAULT_DRIFT_WARNING_SECONDS = 0.5
 _SAFE_CODE_PATTERN = re.compile(r"[^A-Za-z0-9_.-]+")
+_PUBLIC_ARTIFACT_REQUIRED_KEYS = frozenset(
+    {
+        "artifact_id",
+        "artifact_type",
+        "mime_type",
+        "size_bytes",
+        "checksum",
+        "data_class",
+        "retention_policy",
+    }
+)
 _LOCAL_PATH_PATTERN = re.compile(
     r"(?<![A-Za-z])[A-Za-z]:[\\/]|\\\\|file://|local-artifact://|(?<![A-Za-z0-9_])/(Users|home|var|tmp|private|mnt)/",
     re.IGNORECASE,
@@ -29,7 +42,9 @@ _LOCAL_PATH_PATTERN = re.compile(
 
 class QCAdapter(BaseAdapter):
     adapter_name = "qc"
-    supported_capabilities = frozenset({GENERATE_QC_REPORT, BUILD_QC_EVIDENCE_PACKET})
+    supported_capabilities = frozenset(
+        {GENERATE_QC_REPORT, BUILD_QC_EVIDENCE_PACKET, PLAN_MEDIA_INSPECTION}
+    )
     default_limits = CPU_LIGHT_LIMITS
 
     def invoke(self, request: AdapterRequest) -> AdapterResult:
@@ -37,6 +52,8 @@ class QCAdapter(BaseAdapter):
             return self.generate_report(request)
         if request.context.capability == BUILD_QC_EVIDENCE_PACKET:
             return self.build_evidence_packet(request)
+        if request.context.capability == PLAN_MEDIA_INSPECTION:
+            return self.plan_media_inspection(request)
         return AdapterResult.unsupported(request.context.capability, self.adapter_name)
 
     def generate_report(self, request: AdapterRequest) -> AdapterResult:
@@ -68,6 +85,22 @@ class QCAdapter(BaseAdapter):
                 "blocking_issue_count": report["summary"]["blocking_issue_count"],
                 "warning_count": report["summary"]["warning_count"],
                 "artifact_count": len(artifact_refs),
+            },
+        )
+
+    def plan_media_inspection(self, request: AdapterRequest) -> AdapterResult:
+        plan = build_qc_media_inspection_plan(request.input)
+        return AdapterResult(
+            status=AdapterStatus.SUCCEEDED,
+            output={"media_inspection_plan": plan},
+            usage_metrics={
+                "operation": "plan_media_inspection",
+                "plan_only": True,
+                "execution_enabled": False,
+                "planned_check_count": plan["summary"]["planned_check_count"],
+                "required_evidence_count": plan["summary"]["required_evidence_count"],
+                "runtime_invocation_count": 0,
+                "artifact_count": 0,
             },
         )
 
@@ -212,12 +245,234 @@ def build_qc_evidence_packet(input_payload: Mapping[str, Any]) -> dict[str, Any]
     }
 
 
+def build_qc_media_inspection_plan(input_payload: Mapping[str, Any]) -> dict[str, Any]:
+    required_evidence = [
+        _required_evidence(
+            "media_probe",
+            "Media stream, duration, codec, and decode health evidence",
+            input_payload,
+            ("media_probe", "probe"),
+        ),
+        _required_evidence(
+            "audio_quality",
+            "Loudness, peak, silence, and duration evidence",
+            input_payload,
+            ("audio_quality",),
+        ),
+        _required_evidence(
+            "visual_quality",
+            "Black frame, freeze frame, low light, and safe-area evidence",
+            input_payload,
+            ("visual_quality",),
+        ),
+        _required_evidence(
+            "timeline",
+            "Timeline or composition duration and overlay evidence",
+            input_payload,
+            ("timeline", "composition_plan"),
+        ),
+        _required_evidence(
+            "subtitles",
+            "Subtitle timing and text coverage evidence",
+            input_payload,
+            ("subtitles", "subtitle_segments"),
+        ),
+        _required_evidence(
+            "delivery_targets",
+            "Platform profile and delivery threshold evidence",
+            input_payload,
+            ("delivery_targets", "platform_profile"),
+        ),
+    ]
+    planned_checks = [
+        _planned_inspection_check(
+            "media.integrity",
+            "media_probe",
+            "Checks stream presence, decode health, duration, and basic container evidence.",
+            ("media_probe", "probe"),
+            required_evidence,
+        ),
+        _planned_inspection_check(
+            "audio.loudness",
+            "audio_quality",
+            "Checks loudness, peak, silence, and audio duration evidence.",
+            ("audio_quality",),
+            required_evidence,
+        ),
+        _planned_inspection_check(
+            "visual.sampling",
+            "visual_quality",
+            "Checks black-frame, freeze-frame, low-light, and safe-area evidence.",
+            ("visual_quality",),
+            required_evidence,
+        ),
+        _planned_inspection_check(
+            "media.delivery_profile",
+            "delivery_targets",
+            "Checks source dimensions, aspect ratio, duration, and frame-rate evidence against the target profile.",
+            ("media_probe", "delivery_targets"),
+            required_evidence,
+        ),
+        _planned_inspection_check(
+            "media.drift",
+            "timeline",
+            "Checks timeline, source, audio, and video duration drift from caller-safe evidence.",
+            ("media_probe", "audio_quality", "visual_quality", "timeline"),
+            required_evidence,
+        ),
+    ]
+    missing_evidence = [
+        item["evidence_id"] for item in required_evidence if item["status"] == "missing"
+    ]
+    source_artifact_refs = _source_artifact_refs(input_payload)
+    warnings = [
+        {
+            "warning_id": f"missing_{evidence_id}",
+            "message": f"{evidence_id} evidence is missing; execution remains disabled until the evidence is supplied.",
+            "evidence_refs": [],
+        }
+        for evidence_id in missing_evidence
+    ]
+    if not source_artifact_refs:
+        warnings.append(
+            {
+                "warning_id": "missing_source_artifact_ref",
+                "message": "No caller-safe source artifact reference was supplied for future inspection.",
+                "evidence_refs": [],
+            }
+        )
+
+    return {
+        "schema": QC_MEDIA_INSPECTION_PLAN_SCHEMA,
+        "summary": {
+            "status": "needs_evidence" if warnings else "ready",
+            "plan_only": True,
+            "execution_enabled": False,
+            "planned_check_count": len(planned_checks),
+            "required_evidence_count": len(required_evidence),
+            "missing_evidence_count": len(missing_evidence),
+            "source_artifact_count": len(source_artifact_refs),
+            "skipped_runtime_operation_count": 5,
+        },
+        "execution_policy": {
+            "runtime_mode": "plan_only",
+            "execution_enabled": False,
+            "artifact_ref_only": True,
+            "network_access": "disabled_by_default",
+            "media_fetch_enabled": False,
+            "materialize_artifacts": False,
+            "binary_probe_enabled": False,
+            "frame_sampling_enabled": False,
+            "audio_analysis_enabled": False,
+            "visual_analysis_enabled": False,
+            "return_local_paths": False,
+            "allow_raw_command": False,
+        },
+        "source_artifact_refs": source_artifact_refs,
+        "required_evidence": required_evidence,
+        "planned_checks": planned_checks,
+        "skipped_runtime_operations": [
+            "media_fetch",
+            "binary_media_probe",
+            "frame_sampling",
+            "audio_signal_analysis",
+            "visual_signal_analysis",
+        ],
+        "runtime_invocation_counts": {
+            "media_fetch": 0,
+            "media_probe": 0,
+            "frame_sampling": 0,
+            "audio_analysis": 0,
+            "visual_analysis": 0,
+        },
+        "next_evidence_contracts": [
+            "video.asset_ingest.probe_media",
+            "audio.speech.check_audio_quality",
+            "video.analysis.check_visual_quality",
+            "video.qc.build_evidence_packet",
+        ],
+        "warnings": warnings,
+    }
+
+
 def _artifact_public_dict_without_download_token(ref: ArtifactRef) -> dict[str, Any]:
     public_ref = ref.to_public_dict()
     download_url = public_ref.get("download_url")
     if isinstance(download_url, str) and ("?" in download_url or "token" in download_url.casefold()):
         public_ref.pop("download_url", None)
     return public_ref
+
+
+def _required_evidence(
+    evidence_id: str,
+    description: str,
+    input_payload: Mapping[str, Any],
+    source_keys: tuple[str, ...],
+) -> dict[str, Any]:
+    present_keys = [key for key in source_keys if _has_evidence(input_payload.get(key))]
+    return {
+        "evidence_id": evidence_id,
+        "description": description,
+        "status": "present" if present_keys else "missing",
+        "source_keys": present_keys,
+    }
+
+
+def _planned_inspection_check(
+    check_id: str,
+    output_evidence: str,
+    description: str,
+    evidence_ids: tuple[str, ...],
+    required_evidence: list[dict[str, Any]],
+) -> dict[str, Any]:
+    present_ids = {
+        item["evidence_id"] for item in required_evidence if item["status"] == "present"
+    }
+    missing = [evidence_id for evidence_id in evidence_ids if evidence_id not in present_ids]
+    return {
+        "check_id": check_id,
+        "description": description,
+        "status": "blocked_until_evidence_ready" if missing else "ready_for_review",
+        "required_evidence": list(evidence_ids),
+        "missing_evidence": missing,
+        "output_evidence": output_evidence,
+        "execution_enabled": False,
+    }
+
+
+def _source_artifact_refs(input_payload: Mapping[str, Any]) -> list[dict[str, Any]]:
+    refs: list[dict[str, Any]] = []
+    for value in _artifact_ref_inputs(input_payload):
+        if not isinstance(value, Mapping):
+            continue
+        public_ref = {
+            key: value[key]
+            for key in (
+                "artifact_id",
+                "artifact_type",
+                "mime_type",
+                "size_bytes",
+                "checksum",
+                "data_class",
+                "retention_policy",
+                "expires_at",
+            )
+            if key in value and value[key] is not None
+        }
+        if _PUBLIC_ARTIFACT_REQUIRED_KEYS.issubset(public_ref):
+            refs.append(public_ref)
+    return refs
+
+
+def _artifact_ref_inputs(input_payload: Mapping[str, Any]) -> list[Any]:
+    values: list[Any] = []
+    raw_ref = input_payload.get("artifact_ref")
+    if raw_ref is not None:
+        values.append(raw_ref)
+    raw_refs = input_payload.get("artifact_refs")
+    if isinstance(raw_refs, list):
+        values.extend(raw_refs)
+    return values
 
 
 def _evidence_section(

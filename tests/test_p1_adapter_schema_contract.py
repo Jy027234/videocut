@@ -12,7 +12,12 @@ from conftest import MANIFESTS_DIR, SCHEMAS_DIR, assert_no_public_path_or_comman
 import video_editing_toolkit.adapters.tts as tts_adapter
 from video_editing_toolkit.adapters import AdapterContext, AdapterRequest, AdapterStatus
 from video_editing_toolkit.adapters.project_export import EXPORT_PROJECT_FORMAT, ProjectExportAdapter
-from video_editing_toolkit.adapters.qc import BUILD_QC_EVIDENCE_PACKET, GENERATE_QC_REPORT, QCAdapter
+from video_editing_toolkit.adapters.qc import (
+    BUILD_QC_EVIDENCE_PACKET,
+    GENERATE_QC_REPORT,
+    PLAN_MEDIA_INSPECTION,
+    QCAdapter,
+)
 from video_editing_toolkit.adapters.remotion import (
     CREATE_REMOTION_RENDER_JOB,
     VALIDATE_REMOTION_TEMPLATE,
@@ -46,6 +51,10 @@ def test_p1_adapter_outputs_validate_against_manifest_schema_refs() -> None:
         (
             BUILD_QC_EVIDENCE_PACKET,
             QCAdapter().handle(_request(BUILD_QC_EVIDENCE_PACKET, _passing_qc_payload())),
+        ),
+        (
+            PLAN_MEDIA_INSPECTION,
+            QCAdapter().handle(_request(PLAN_MEDIA_INSPECTION, _qc_inspection_plan_payload())),
         ),
         (
             VALIDATE_REMOTION_TEMPLATE,
@@ -174,6 +183,29 @@ def _passing_qc_payload() -> dict[str, Any]:
             "required_keywords": ["Acme"],
             "required_safe_area": {"left": 0.1, "right": 0.9, "top": 0.1, "bottom": 0.9},
         },
+    }
+
+
+def _qc_inspection_plan_payload() -> dict[str, Any]:
+    return _passing_qc_payload() | {
+        "artifact_ref": {
+            "artifact_id": "artifact_qc_plan_schema",
+            "artifact_type": "source_video",
+            "mime_type": "video/mp4",
+            "size_bytes": 1234,
+            "checksum": "sha256:" + "a" * 64,
+            "data_class": "sensitive",
+            "retention_policy": "short_lived",
+        },
+        "media_probe": {
+            "duration_seconds": 5.0,
+            "streams": [
+                {"codec_type": "video", "width": 1080, "height": 1920},
+                {"codec_type": "audio"},
+            ],
+        },
+        "audio_quality": {"quality_summary": {"integrated_lufs": -16.0}},
+        "visual_quality": {"summary": {"black_frame_seconds": 0}},
     }
 
 

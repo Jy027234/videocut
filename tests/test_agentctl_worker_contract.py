@@ -20,6 +20,7 @@ from video_editing_toolkit.agentctl_worker import (
 )
 from video_editing_toolkit.agentctl_worker_runner import WorkerLocalExecutionTimeout
 from video_editing_toolkit.agentctl_worker_runner import WorkerLocalExecutionCancelled
+from video_editing_toolkit.adapters.qc import PLAN_MEDIA_INSPECTION
 from video_editing_toolkit.worker_pool import (
     DOCKER_EXECUTION_BACKEND,
     WORKER_POOL_CONTRACT,
@@ -328,6 +329,47 @@ def test_worker_rejects_unknown_capability_before_agentctl_execution(tmp_path: P
     assert complete_body["result"]["reason_code"] == "worker.capability_unknown"
     assert complete_body["result"]["capability"] == "video.unknown.noop"
     assert_no_public_path_or_command_leak(result)
+
+
+def test_worker_rejects_p1_capability_before_materialization_or_execution(tmp_path: Path) -> None:
+    content = b"p1 input bytes"
+    artifact_id = "artifact_p1_disabled"
+    job = _leased_job(
+        job_id="rtjob_p1_disabled",
+        capability=PLAN_MEDIA_INSPECTION,
+        input_payload={
+            "project_id": "proj_p1_disabled",
+            "artifact_id": artifact_id,
+        },
+        artifact_refs=[_artifact_ref(artifact_id=artifact_id, content=content)],
+    )
+    fake = FakeAgentctlWorkerClient(lease_job=job)
+    fetcher = FakeArtifactBytesFetcher(
+        {
+            "http://platform.local/artifacts/download/input.mp4": content,
+        }
+    )
+    worker = VideoToolkitAgentctlWorker(
+        _config(tmp_path, artifact_base_url="http://platform.local"),
+        client=fake,
+        artifact_fetcher=fetcher,
+        local_runner=_unexpected_runner,
+    )
+
+    result = worker.run_once()
+    complete_body = fake.requests[-1]["body"]
+
+    assert result["ok"] is False
+    assert result["status"] == "failed"
+    assert complete_body["status"] == "failed"
+    assert complete_body["result"]["error_code"] == "video_toolkit_worker.execution_policy_rejected"
+    assert complete_body["result"]["reason_code"] == "worker.p1_capability_disabled"
+    assert complete_body["result"]["capability"] == PLAN_MEDIA_INSPECTION
+    artifact_root = tmp_path / "worker-artifacts"
+    assert fetcher.requests == []
+    assert not artifact_root.exists() or not any(artifact_root.iterdir())
+    assert_no_public_path_or_command_leak(result)
+    assert_no_public_path_or_command_leak(complete_body)
 
 
 def test_worker_default_policy_rejects_cpu_heavy_capability_before_materialization(tmp_path: Path) -> None:

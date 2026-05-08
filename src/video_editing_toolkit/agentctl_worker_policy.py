@@ -6,7 +6,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
-from video_editing_toolkit.adapters import resolve_route
+from video_editing_toolkit.adapters import P1_CAPABILITY_ROUTES, resolve_route
 from video_editing_toolkit.resource_guard import CPU_LIGHT_LIMITS, ErrorCode
 
 
@@ -58,6 +58,13 @@ def validate_worker_execution_policy(
         raise WorkerExecutionPolicyError(
             "worker.capability_not_allowed",
             "Capability is not enabled for this worker.",
+            capability=capability,
+        )
+
+    if capability in P1_CAPABILITY_ROUTES:
+        raise WorkerExecutionPolicyError(
+            "worker.p1_capability_disabled",
+            "P1 capability routes are disabled for this worker by default.",
             capability=capability,
         )
 
