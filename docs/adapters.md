@@ -278,6 +278,12 @@ The MOSS-TTS-Nano preflight expects a local ONNX bundle root containing
 and codec bundle paths. Public output reports only aggregate readiness and
 missing file names, never the local bundle paths.
 
+Voice-clone signals in `audio.tts.generate_voiceover` are routed through the
+shared high-sensitivity gate and remain deferred. A complete approval context can
+only produce `approved_for_preflight_only`; `execution_allowed` remains `false`
+and the adapter does not create voiceprints, inspect reference media, synthesize
+audio, or expose approval values.
+
 ## Resource Limits
 
 Resource primitives live in `src/video_editing_toolkit/resource_guard`.

@@ -964,6 +964,10 @@
             "type": "string"
           }
         },
+        "high_sensitivity_gate": {
+          "type": "object",
+          "additionalProperties": true
+        },
         "warnings": {
           "type": "array",
           "items": {

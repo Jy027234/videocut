@@ -145,6 +145,9 @@ def test_tts_voice_clone_is_deferred_even_with_consent(
     assert rejected.error_code == ErrorCode.INVALID_REQUEST
     assert rejected.output["reason_code"] == "tts.voice_clone_deferred"
     assert rejected.output["requires_consent"] is True
+    assert rejected.output["high_sensitivity_gate"]["status"] == "deferred"
+    assert rejected.output["high_sensitivity_gate"]["execution_allowed"] is False
+    assert "policy.allow_high_sensitivity_preflight" in rejected.output["high_sensitivity_gate"]["missing_fields"]
     assert_no_public_path_or_command_leak(rejected.output)
 
     still_deferred = adapter.handle(
@@ -158,6 +161,8 @@ def test_tts_voice_clone_is_deferred_even_with_consent(
                     "voice_clone_approved": True,
                     "subject_consent": True,
                 },
+                "approval_context": _complete_voice_clone_approval_context(),
+                "high_sensitivity_policy": _complete_high_sensitivity_policy(),
             }
         )
     )
@@ -166,7 +171,13 @@ def test_tts_voice_clone_is_deferred_even_with_consent(
     assert still_deferred.error_code == ErrorCode.INVALID_REQUEST
     assert still_deferred.output["reason_code"] == "tts.voice_clone_deferred"
     assert still_deferred.output["deferred_capability"] == "audio.tts.clone_voice"
+    assert still_deferred.output["high_sensitivity_gate"]["capability"] == "audio.tts.clone_voice"
+    assert still_deferred.output["high_sensitivity_gate"]["status"] == "approved_for_preflight_only"
+    assert still_deferred.output["high_sensitivity_gate"]["reason_code"] == "sensitive_capability.preflight_only"
+    assert still_deferred.output["high_sensitivity_gate"]["execution_allowed"] is False
+    assert still_deferred.output["high_sensitivity_gate"]["missing_fields"] == []
     assert "voiceprint_fixture" not in json.dumps(still_deferred.output, sort_keys=True)
+    assert "approval_123" not in json.dumps(still_deferred.output, sort_keys=True)
     assert_no_public_path_or_command_leak(still_deferred.output)
 
 
@@ -367,6 +378,25 @@ def _clear_model_env(monkeypatch) -> None:
         "MOSS_TTS_NANO_CODEC_BUNDLE",
     ):
         monkeypatch.delenv(env_var, raising=False)
+
+
+def _complete_high_sensitivity_policy() -> dict[str, object]:
+    return {
+        "high_sensitivity_contract_version": "2026-05-08.p1",
+        "allow_high_sensitivity_preflight": True,
+        "retention_policy_id": "voice-preflight-no-media-retention",
+        "audit_log_required": True,
+    }
+
+
+def _complete_voice_clone_approval_context() -> dict[str, object]:
+    return {
+        "platform_approval_id": "approval_123",
+        "approved_by": "reviewer@example.invalid",
+        "approval_expires_at": "2026-06-08T00:00:00Z",
+        "subject_consent_evidence_ref": "consent_evidence_123",
+        "approved_capabilities": ["audio.tts.clone_voice"],
+    }
 
 
 def _install_fake_onnxruntime(monkeypatch) -> None:

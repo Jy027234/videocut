@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any, Mapping, Sequence
 
 from video_editing_toolkit.resource_guard import CPU_HEAVY_LIMITS, ErrorCode
+from video_editing_toolkit.security import CLONE_VOICE, evaluate_sensitive_capability_gate
 from video_editing_toolkit.storage import ArtifactRef, LocalArtifactStore
 
 from .base import AdapterRequest, AdapterResult, AdapterStatus, BaseAdapter, TOOLKIT_ID
@@ -127,6 +128,11 @@ class TTSAdapter(BaseAdapter):
     def _generate_voiceover(self, request: AdapterRequest) -> AdapterResult:
         clone_requested = _voice_clone_requested(request.input)
         if clone_requested:
+            gate = evaluate_sensitive_capability_gate(
+                policy=_high_sensitivity_policy(request),
+                approval_context=_approval_context(request),
+                capability=CLONE_VOICE,
+            ).to_public_dict()
             return AdapterResult(
                 status=AdapterStatus.FAILED,
                 output={
@@ -136,6 +142,7 @@ class TTSAdapter(BaseAdapter):
                     "requires_consent": True,
                     "deferred_capability": "audio.tts.clone_voice",
                     "required_context": ["consent_policy", "approval_context"],
+                    "high_sensitivity_gate": gate,
                     "model_runtime": _model_runtime_public(
                         configured=bool(_configured_model_path(request.input)),
                         reason_code="tts.voice_clone_deferred",
@@ -483,6 +490,30 @@ def _voice_clone_requested(value: Any) -> bool:
     elif isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
         return any(_voice_clone_requested(child) for child in value)
     return False
+
+
+def _high_sensitivity_policy(request: AdapterRequest) -> dict[str, Any]:
+    policy: dict[str, Any] = {}
+    context_policy = request.context.policy_context
+    if isinstance(context_policy, Mapping):
+        policy.update(_mapping(context_policy.get("data_policy")))
+        policy.update(_mapping(context_policy.get("high_sensitivity_policy")))
+    policy.update(_mapping(request.input.get("policy")))
+    policy.update(_mapping(request.input.get("high_sensitivity_policy")))
+    return policy
+
+
+def _approval_context(request: AdapterRequest) -> dict[str, Any]:
+    approval: dict[str, Any] = {}
+    context_policy = request.context.policy_context
+    if isinstance(context_policy, Mapping):
+        approval.update(_mapping(context_policy.get("approval_context")))
+    approval.update(_mapping(request.input.get("approval_context")))
+    return approval
+
+
+def _mapping(value: Any) -> dict[str, Any]:
+    return dict(value) if isinstance(value, Mapping) else {}
 
 
 def _plan_only(input_payload: Mapping[str, Any]) -> bool:
