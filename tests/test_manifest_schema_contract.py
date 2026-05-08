@@ -56,6 +56,21 @@ REQUIRED_ERROR_CODES = {
 }
 
 HIGH_SENSITIVITY = {"high", "restricted", "biometric", "voice"}
+TOOLKIT_MANIFEST_SCHEMA_PATH = SCHEMAS_DIR / "toolkit-manifest.schema.json"
+P0_MANIFEST_PATH = MANIFESTS_DIR / "video-editing-toolkit.p0.manifest.json"
+P1_MANIFEST_PATH = MANIFESTS_DIR / "video-editing-toolkit.p1.manifest.json"
+P1_1_CAPABILITIES = {
+    "audio.tts.generate_voiceover",
+    "video.qc.generate_report",
+    "video.template.validate_remotion_template",
+    "video.template.create_remotion_render_job",
+}
+DEFERRED_HIGH_SENSITIVITY_CAPABILITIES = {
+    "audio.tts.clone_voice",
+    "audio.speech.diarize_speakers",
+    "video.analysis.recognize_faces",
+    "video.analysis.recognize_people",
+}
 
 
 def test_manifest_files_parse_and_keep_required_p0_fields() -> None:
@@ -117,6 +132,51 @@ def test_manifest_schema_references_are_resolvable() -> None:
             assert target_path.is_file(), f"{path} {location} references missing schema {ref!r}"
             target = load_json(target_path)
             _resolve_json_pointer(target, fragment, source=f"{path} {location} -> {ref!r}")
+
+
+def test_p0_and_p1_manifests_validate_against_toolkit_manifest_schema() -> None:
+    validator = _toolkit_manifest_validator()
+
+    p0_manifest = load_json(P0_MANIFEST_PATH)
+    p1_manifest = load_json(P1_MANIFEST_PATH)
+
+    validator.validate(p0_manifest)
+    validator.validate(p1_manifest)
+    assert p0_manifest["version"].endswith("-p0")
+    assert p1_manifest["version"].endswith("-p1.1")
+
+
+def test_p1_manifest_extends_p0_without_default_enabling_p1_or_sensitive_capabilities() -> None:
+    p0_manifest = load_json(P0_MANIFEST_PATH)
+    p1_manifest = load_json(P1_MANIFEST_PATH)
+    p0_capabilities = {capability["capability"] for capability in p0_manifest["capabilities"]}
+    p1_capabilities = {capability["capability"] for capability in p1_manifest["capabilities"]}
+    enabled_capabilities = {
+        capability["capability"]
+        for capability in p1_manifest["capabilities"]
+        if capability.get("status") == "enabled"
+    }
+
+    assert p0_capabilities.issubset(p1_capabilities)
+    assert P1_1_CAPABILITIES.issubset(p1_capabilities)
+    assert not P1_1_CAPABILITIES.intersection(enabled_capabilities)
+    assert not DEFERRED_HIGH_SENSITIVITY_CAPABILITIES.intersection(enabled_capabilities)
+
+    p1_entries = {
+        capability["capability"]: capability
+        for capability in p1_manifest["capabilities"]
+        if capability["capability"] in P1_1_CAPABILITIES
+    }
+    assert {entry["status"] for entry in p1_entries.values()} == {"disabled"}
+    assert p1_entries["audio.tts.generate_voiceover"]["sandbox_policy"]["download_models"] is False
+    assert p1_entries["audio.tts.generate_voiceover"]["sandbox_policy"]["voice_cloning"] == "disabled"
+    assert p1_entries["video.template.validate_remotion_template"]["sandbox_policy"]["run_chromium"] is False
+    assert p1_entries["video.template.create_remotion_render_job"]["sandbox_policy"]["run_chromium"] is False
+
+    deferred = p1_manifest["approval_policy"]["deferred_high_sensitivity_capabilities"]
+    assert {entry["capability"] for entry in deferred} == DEFERRED_HIGH_SENSITIVITY_CAPABILITIES
+    assert {entry["status"] for entry in deferred} == {"deferred"}
+    assert all("approval" in entry["requires"] and "consent" in entry["requires"] for entry in deferred)
 
 
 def test_enabled_manifest_capabilities_match_runtime_and_local_entrypoints() -> None:
@@ -229,6 +289,13 @@ def _resolve_json_pointer(document: Any, fragment: str, *, source: str) -> Any:
         else:
             raise AssertionError(f"{source} cannot descend into {type(current).__name__}")
     return current
+
+
+def _toolkit_manifest_validator() -> Any:
+    schema = load_json(TOOLKIT_MANIFEST_SCHEMA_PATH)
+    validator_cls = jsonschema.validators.validator_for(schema)
+    validator_cls.check_schema(schema)
+    return validator_cls(schema)
 
 
 def _set_delta_message(left_name: str, left: set[str], right_name: str, right: set[str]) -> str:

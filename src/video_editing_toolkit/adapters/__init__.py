@@ -18,8 +18,20 @@ from .delivery import DeliveryAdapter
 from .ffmpeg import FFmpegAdapter
 from .opencv import OpenCVAdapter
 from .project_edit import ProjectEditAdapter
-from .routing import CAPABILITY_ROUTES, CapabilityRoute, build_adapter, resolve_route
+from .qc import QCAdapter
+from .remotion import RemotionAdapter
+from .routing import (
+    ALL_CAPABILITY_ROUTES,
+    CAPABILITY_ROUTES,
+    P1_CAPABILITY_ROUTES,
+    CapabilityRoute,
+    build_adapter,
+    build_p1_experimental_adapter,
+    resolve_p1_experimental_route,
+    resolve_route,
+)
 from .scenedetect import PySceneDetectAdapter
+from .tts import TTSAdapter
 from .whisper import WhisperAdapter
 
 __all__ = [
@@ -42,7 +54,14 @@ __all__ = [
     "PlaceholderAdapter",
     "ProjectEditAdapter",
     "PySceneDetectAdapter",
+    "QCAdapter",
+    "RemotionAdapter",
+    "TTSAdapter",
     "WhisperAdapter",
+    "ALL_CAPABILITY_ROUTES",
+    "P1_CAPABILITY_ROUTES",
     "build_adapter",
+    "build_p1_experimental_adapter",
+    "resolve_p1_experimental_route",
     "resolve_route",
 ]

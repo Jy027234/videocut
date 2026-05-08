@@ -436,6 +436,68 @@
         }
       }
     },
+    "public_artifact_ref": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "artifact_id",
+        "artifact_type"
+      ],
+      "properties": {
+        "artifact_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "artifact_type": {
+          "type": "string",
+          "minLength": 1
+        },
+        "mime_type": {
+          "type": "string"
+        },
+        "size_bytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "checksum": {
+          "oneOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "object",
+              "additionalProperties": true
+            }
+          ]
+        },
+        "data_class": {
+          "type": "string"
+        },
+        "retention_policy": {
+          "type": "string"
+        },
+        "expires_at": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "download_url": {
+          "type": "string"
+        },
+        "access_policy": {
+          "oneOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "object",
+              "additionalProperties": true
+            }
+          ]
+        }
+      }
+    },
     "run_context": {
       "type": "object",
       "additionalProperties": false,
@@ -494,6 +556,936 @@
         "worker_cpu_seconds": {
           "type": "number",
           "minimum": 0
+        }
+      }
+    },
+    "voiceover_input": {
+      "type": "object",
+      "additionalProperties": false,
+      "anyOf": [
+        {
+          "required": [
+            "text"
+          ]
+        },
+        {
+          "required": [
+            "script"
+          ]
+        },
+        {
+          "required": [
+            "segments"
+          ]
+        },
+        {
+          "required": [
+            "script_artifact_ref"
+          ]
+        }
+      ],
+      "properties": {
+        "project_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "script_artifact_ref": {
+          "$ref": "#/$defs/public_artifact_ref"
+        },
+        "text": {
+          "type": "string",
+          "minLength": 1
+        },
+        "script": {
+          "type": "string",
+          "minLength": 1
+        },
+        "segments": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "oneOf": [
+              {
+                "type": "string",
+                "minLength": 1
+              },
+              {
+                "type": "object",
+                "additionalProperties": true,
+                "required": [
+                  "text"
+                ],
+                "properties": {
+                  "text": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "start_seconds": {
+                    "type": "number"
+                  },
+                  "end_seconds": {
+                    "type": "number"
+                  },
+                  "duration_seconds": {
+                    "type": "number",
+                    "minimum": 0
+                  }
+                }
+              }
+            ]
+          }
+        },
+        "voice_profile": {
+          "type": "object",
+          "additionalProperties": true,
+          "properties": {
+            "type": {
+              "type": "string",
+              "enum": [
+                "system_voice",
+                "licensed_synthetic"
+              ]
+            },
+            "voice_id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "locale": {
+              "type": "string",
+              "minLength": 2
+            },
+            "style": {
+              "type": "string"
+            },
+            "speed": {
+              "type": "number",
+              "minimum": 0.5,
+              "maximum": 2.0
+            }
+          }
+        },
+        "voice": {
+          "type": "object",
+          "additionalProperties": true
+        },
+        "voice_preset": {
+          "type": "string"
+        },
+        "language": {
+          "type": "string"
+        },
+        "style": {
+          "type": "string"
+        },
+        "pace": {
+          "type": "string"
+        },
+        "pitch": {
+          "type": "string"
+        },
+        "synthesis_mode": {
+          "type": "string",
+          "enum": [
+            "plan_only"
+          ]
+        },
+        "mode": {
+          "type": "string"
+        },
+        "dry_run": {
+          "type": "boolean"
+        },
+        "sample_rate_hz": {
+          "type": "integer",
+          "minimum": 8000,
+          "maximum": 96000
+        },
+        "output_format": {
+          "oneOf": [
+            {
+              "type": "string",
+              "enum": [
+                "wav",
+                "mp3",
+                "m4a",
+                "flac",
+                "ogg"
+              ]
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "container",
+                "audio_codec"
+              ],
+              "properties": {
+                "container": {
+                  "type": "string",
+                  "enum": [
+                    "wav",
+                    "mp3",
+                    "m4a",
+                    "flac",
+                    "ogg"
+                  ]
+                },
+                "audio_codec": {
+                  "type": "string"
+                },
+                "sample_rate_hz": {
+                  "type": "integer",
+                  "minimum": 8000,
+                  "maximum": 96000
+                }
+              }
+            }
+          ]
+        },
+        "format": {
+          "type": "string"
+        },
+        "emit_manifest_artifact": {
+          "type": "boolean"
+        },
+        "consent_policy": {
+          "type": "object",
+          "additionalProperties": true
+        },
+        "approval_context": {
+          "type": "object",
+          "additionalProperties": true
+        },
+        "options": {
+          "type": "object",
+          "additionalProperties": true
+        }
+      }
+    },
+    "voiceover_output": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema",
+        "operation",
+        "model_runtime"
+      ],
+      "properties": {
+        "schema": {
+          "type": "string"
+        },
+        "operation": {
+          "const": "generate_voiceover"
+        },
+        "reason_code": {
+          "type": "string"
+        },
+        "synthesis_mode": {
+          "type": "string"
+        },
+        "plan_available": {
+          "type": "boolean"
+        },
+        "voiceover_plan": {
+          "type": "object",
+          "additionalProperties": true
+        },
+        "voiceover_manifest": {
+          "type": "object",
+          "additionalProperties": true
+        },
+        "model_runtime": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "provider",
+            "backend",
+            "model_configured",
+            "downloads_disabled_by_default",
+            "network_access",
+            "execution_enabled",
+            "reason_code"
+          ],
+          "properties": {
+            "provider": {
+              "const": "MOSS-TTS-Nano"
+            },
+            "backend": {
+              "const": "onnx_cpu"
+            },
+            "model_configured": {
+              "type": "boolean"
+            },
+            "downloads_disabled_by_default": {
+              "const": true
+            },
+            "network_access": {
+              "const": "disabled_by_contract"
+            },
+            "execution_enabled": {
+              "const": false
+            },
+            "reason_code": {
+              "type": "string"
+            }
+          }
+        },
+        "audio_artifact_ref": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/public_artifact_ref"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "voiceover_manifest_artifact_ref": {
+          "$ref": "#/$defs/public_artifact_ref"
+        },
+        "artifact_refs": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/public_artifact_ref"
+          }
+        },
+        "requires_consent": {
+          "type": "boolean"
+        },
+        "deferred_capability": {
+          "type": "string"
+        },
+        "required_context": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "warnings": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "qc_report_input": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "project_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "artifact_ref": {
+          "$ref": "#/$defs/public_artifact_ref"
+        },
+        "timeline": {
+          "type": "object",
+          "additionalProperties": true
+        },
+        "composition_plan": {
+          "type": "object",
+          "additionalProperties": true
+        },
+        "subtitles": {
+          "oneOf": [
+            {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": true
+              }
+            },
+            {
+              "type": "object",
+              "additionalProperties": true
+            }
+          ]
+        },
+        "subtitle_segments": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": true
+          }
+        },
+        "audio_quality": {
+          "type": "object",
+          "additionalProperties": true
+        },
+        "visual_quality": {
+          "type": "object",
+          "additionalProperties": true
+        },
+        "brand_kit": {
+          "type": "object",
+          "additionalProperties": true
+        },
+        "text_corpus": {
+          "type": "string"
+        },
+        "drift_warning_threshold_seconds": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "checks": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "options": {
+          "type": "object",
+          "additionalProperties": true
+        }
+      }
+    },
+    "qc_report_output": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "qc_report"
+      ],
+      "properties": {
+        "qc_report": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "schema",
+            "summary",
+            "severity_counts",
+            "checks",
+            "blocking_issues",
+            "warnings",
+            "evidence_refs"
+          ],
+          "properties": {
+            "schema": {
+              "type": "string"
+            },
+            "summary": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "status",
+                "check_count",
+                "pass_count",
+                "warning_count",
+                "blocking_issue_count",
+                "evidence_ref_count"
+              ],
+              "properties": {
+                "status": {
+                  "type": "string",
+                  "enum": [
+                    "pass",
+                    "warning",
+                    "blocking"
+                  ]
+                },
+                "check_count": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "pass_count": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "warning_count": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "blocking_issue_count": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "evidence_ref_count": {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              }
+            },
+            "severity_counts": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "pass",
+                "warning",
+                "blocking"
+              ],
+              "properties": {
+                "pass": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "warning": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "blocking": {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              }
+            },
+            "checks": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/qc_contract_check"
+              }
+            },
+            "blocking_issues": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/qc_contract_check"
+              }
+            },
+            "warnings": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/qc_contract_check"
+              }
+            },
+            "evidence_refs": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "qc_report_artifact_ref": {
+          "$ref": "#/$defs/public_artifact_ref"
+        },
+        "artifact_refs": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/public_artifact_ref"
+          }
+        }
+      }
+    },
+    "remotion_template_validation_input": {
+      "type": "object",
+      "additionalProperties": false,
+      "anyOf": [
+        {
+          "required": [
+            "template_manifest"
+          ]
+        },
+        {
+          "required": [
+            "manifest"
+          ]
+        },
+        {
+          "required": [
+            "template_artifact_ref"
+          ]
+        }
+      ],
+      "properties": {
+        "project_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "template_artifact_ref": {
+          "$ref": "#/$defs/public_artifact_ref"
+        },
+        "template_manifest": {
+          "type": "object",
+          "additionalProperties": true
+        },
+        "manifest": {
+          "type": "object",
+          "additionalProperties": true
+        },
+        "composition_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "component_name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "props_schema_artifact_ref": {
+          "$ref": "#/$defs/public_artifact_ref"
+        },
+        "props": {
+          "type": "object",
+          "additionalProperties": true
+        },
+        "render_settings": {
+          "type": "object",
+          "additionalProperties": true
+        },
+        "format": {
+          "type": "string"
+        },
+        "options": {
+          "type": "object",
+          "additionalProperties": true
+        }
+      }
+    },
+    "remotion_template_validation_output": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema",
+        "valid"
+      ],
+      "properties": {
+        "schema": {
+          "type": "string"
+        },
+        "valid": {
+          "type": "boolean"
+        },
+        "stable_error_code": {
+          "type": "string"
+        },
+        "template_id": {
+          "type": "string"
+        },
+        "template_version": {
+          "type": "string"
+        },
+        "composition": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "composition_id",
+            "duration_frames",
+            "fps",
+            "duration_seconds",
+            "width",
+            "height"
+          ],
+          "properties": {
+            "composition_id": {
+              "type": "string"
+            },
+            "duration_frames": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "fps": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "duration_seconds": {
+              "type": "number",
+              "minimum": 0
+            },
+            "width": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "height": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        },
+        "props_summary": {
+          "type": "object",
+          "additionalProperties": true
+        },
+        "manifest_summary": {
+          "type": "object",
+          "additionalProperties": true
+        },
+        "chromium_required": {
+          "type": "boolean"
+        },
+        "dispatcher_required": {
+          "type": "boolean"
+        },
+        "runtime_execution": {
+          "type": "string"
+        },
+        "props": {
+          "type": "object",
+          "additionalProperties": true
+        },
+        "template_artifact_ref": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/public_artifact_ref"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "diagnostics": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/template_diagnostic"
+          }
+        },
+        "artifact_refs": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/public_artifact_ref"
+          }
+        },
+        "warnings": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "remotion_render_job_input": {
+      "type": "object",
+      "additionalProperties": false,
+      "anyOf": [
+        {
+          "required": [
+            "template_manifest",
+            "composition_id"
+          ]
+        },
+        {
+          "required": [
+            "manifest",
+            "composition_id"
+          ]
+        },
+        {
+          "required": [
+            "template_artifact_ref",
+            "composition_id",
+            "props_artifact_ref",
+            "render_settings"
+          ]
+        }
+      ],
+      "properties": {
+        "project_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "template_artifact_ref": {
+          "$ref": "#/$defs/public_artifact_ref"
+        },
+        "template_manifest": {
+          "type": "object",
+          "additionalProperties": true
+        },
+        "manifest": {
+          "type": "object",
+          "additionalProperties": true
+        },
+        "composition_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "props_artifact_ref": {
+          "$ref": "#/$defs/public_artifact_ref"
+        },
+        "props": {
+          "type": "object",
+          "additionalProperties": true
+        },
+        "render_settings": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/remotion_render_settings"
+            },
+            {
+              "type": "object",
+              "additionalProperties": true
+            }
+          ]
+        },
+        "format": {
+          "type": "string"
+        },
+        "options": {
+          "type": "object",
+          "additionalProperties": true
+        }
+      }
+    },
+    "remotion_render_job_output": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "dispatcher_required",
+        "render_job_id",
+        "render_job"
+      ],
+      "properties": {
+        "schema": {
+          "type": "string"
+        },
+        "render_job_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "created",
+            "blocked",
+            "requires_runtime",
+            "dispatcher_required"
+          ]
+        },
+        "dispatcher_required": {
+          "type": "boolean"
+        },
+        "composition_id": {
+          "type": "string"
+        },
+        "chromium_required": {
+          "type": "boolean"
+        },
+        "license_confirmation_required": {
+          "type": "boolean"
+        },
+        "render_job": {
+          "type": "object",
+          "additionalProperties": true,
+          "required": [
+            "render_job_id",
+            "status",
+            "dispatcher_required",
+            "required_runtime",
+            "sandbox"
+          ]
+        },
+        "render_job_artifact_ref": {
+          "$ref": "#/$defs/public_artifact_ref"
+        },
+        "artifact_refs": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/public_artifact_ref"
+          }
+        },
+        "warnings": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "qc_contract_check": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "check_id",
+        "status",
+        "severity",
+        "message",
+        "evidence_refs"
+      ],
+      "properties": {
+        "check_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "passed",
+            "warning",
+            "failed"
+          ]
+        },
+        "severity": {
+          "type": "string",
+          "enum": [
+            "pass",
+            "warning",
+            "blocking"
+          ]
+        },
+        "message": {
+          "type": "string",
+          "minLength": 1
+        },
+        "evidence_refs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "details": {
+          "type": "object",
+          "additionalProperties": true
+        }
+      }
+    },
+    "template_diagnostic": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "level",
+        "message"
+      ],
+      "properties": {
+        "level": {
+          "type": "string",
+          "enum": [
+            "info",
+            "warning",
+            "error"
+          ]
+        },
+        "message": {
+          "type": "string",
+          "minLength": 1
+        },
+        "code": {
+          "type": "string"
+        }
+      }
+    },
+    "remotion_render_settings": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "container",
+        "resolution",
+        "fps",
+        "duration_seconds"
+      ],
+      "properties": {
+        "container": {
+          "type": "string",
+          "enum": [
+            "mp4",
+            "webm"
+          ]
+        },
+        "resolution": {
+          "type": "string",
+          "minLength": 1
+        },
+        "fps": {
+          "type": "number",
+          "minimum": 1,
+          "maximum": 120
+        },
+        "duration_seconds": {
+          "type": "number",
+          "minimum": 0
+        },
+        "codec": {
+          "type": "string"
+        },
+        "audio_codec": {
+          "type": "string"
         }
       }
     }

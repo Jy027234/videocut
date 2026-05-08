@@ -18,6 +18,18 @@
     },
     {
       "$ref": "#/$defs/render_config_manifest"
+    },
+    {
+      "$ref": "#/$defs/voiceover_manifest"
+    },
+    {
+      "$ref": "#/$defs/qc_report_manifest"
+    },
+    {
+      "$ref": "#/$defs/remotion_template_validation_manifest"
+    },
+    {
+      "$ref": "#/$defs/remotion_render_job_manifest"
     }
   ],
   "$defs": {
@@ -497,6 +509,341 @@
         "integer",
         "boolean"
       ]
+    },
+    "voiceover_manifest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema",
+        "project_id",
+        "run_id",
+        "script_artifact_ref",
+        "audio_artifact_ref",
+        "voice_profile",
+        "duration_seconds",
+        "safety"
+      ],
+      "properties": {
+        "schema": {
+          "const": "video_editing_toolkit.voiceover.v1"
+        },
+        "project_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "run_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "script_artifact_ref": {
+          "$ref": "#/$defs/public_artifact_ref"
+        },
+        "audio_artifact_ref": {
+          "$ref": "#/$defs/public_artifact_ref"
+        },
+        "voice_profile": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "voice_id"
+          ],
+          "properties": {
+            "type": {
+              "type": "string",
+              "enum": [
+                "system_voice",
+                "licensed_synthetic"
+              ]
+            },
+            "voice_id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "locale": {
+              "type": "string"
+            }
+          }
+        },
+        "duration_seconds": {
+          "type": "number",
+          "minimum": 0
+        },
+        "safety": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "voice_cloning_used",
+            "model_downloaded"
+          ],
+          "properties": {
+            "voice_cloning_used": {
+              "const": false
+            },
+            "model_downloaded": {
+              "const": false
+            }
+          }
+        }
+      }
+    },
+    "qc_report_manifest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema",
+        "project_id",
+        "run_id",
+        "input_artifact_ref",
+        "overall_status",
+        "checks",
+        "warnings"
+      ],
+      "properties": {
+        "schema": {
+          "const": "video_editing_toolkit.qc_report.v1"
+        },
+        "project_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "run_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "input_artifact_ref": {
+          "$ref": "#/$defs/public_artifact_ref"
+        },
+        "overall_status": {
+          "type": "string",
+          "enum": [
+            "pass",
+            "warn",
+            "fail",
+            "blocked"
+          ]
+        },
+        "checks": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/qc_check_result"
+          }
+        },
+        "warnings": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "qc_check_result": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "check",
+        "status",
+        "issue_count"
+      ],
+      "properties": {
+        "check": {
+          "type": "string",
+          "minLength": 1
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "pass",
+            "warn",
+            "fail",
+            "blocked"
+          ]
+        },
+        "issue_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "summary": {
+          "type": "string"
+        }
+      }
+    },
+    "remotion_template_validation_manifest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema",
+        "project_id",
+        "run_id",
+        "template_artifact_ref",
+        "component_name",
+        "valid",
+        "diagnostics",
+        "runtime"
+      ],
+      "properties": {
+        "schema": {
+          "const": "video_editing_toolkit.remotion_template_validation.v1"
+        },
+        "project_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "run_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "template_artifact_ref": {
+          "$ref": "#/$defs/public_artifact_ref"
+        },
+        "component_name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "valid": {
+          "type": "boolean"
+        },
+        "diagnostics": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/template_diagnostic"
+          }
+        },
+        "runtime": {
+          "$ref": "#/$defs/p1_runtime_safety"
+        }
+      }
+    },
+    "remotion_render_job_manifest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema",
+        "project_id",
+        "run_id",
+        "job_id",
+        "status",
+        "template_artifact_ref",
+        "props_artifact_ref",
+        "render_settings",
+        "runtime"
+      ],
+      "properties": {
+        "schema": {
+          "const": "video_editing_toolkit.remotion_render_job.v1"
+        },
+        "project_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "run_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "job_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "created",
+            "blocked",
+            "requires_runtime"
+          ]
+        },
+        "template_artifact_ref": {
+          "$ref": "#/$defs/public_artifact_ref"
+        },
+        "props_artifact_ref": {
+          "$ref": "#/$defs/public_artifact_ref"
+        },
+        "render_settings": {
+          "$ref": "#/$defs/remotion_render_settings"
+        },
+        "runtime": {
+          "$ref": "#/$defs/p1_runtime_safety"
+        }
+      }
+    },
+    "template_diagnostic": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "level",
+        "message"
+      ],
+      "properties": {
+        "level": {
+          "type": "string",
+          "enum": [
+            "info",
+            "warning",
+            "error"
+          ]
+        },
+        "message": {
+          "type": "string",
+          "minLength": 1
+        },
+        "code": {
+          "type": "string"
+        }
+      }
+    },
+    "remotion_render_settings": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "container",
+        "resolution",
+        "fps",
+        "duration_seconds"
+      ],
+      "properties": {
+        "container": {
+          "type": "string",
+          "enum": [
+            "mp4",
+            "webm"
+          ]
+        },
+        "resolution": {
+          "type": "string",
+          "minLength": 1
+        },
+        "fps": {
+          "type": "number",
+          "minimum": 1,
+          "maximum": 120
+        },
+        "duration_seconds": {
+          "type": "number",
+          "minimum": 0
+        },
+        "codec": {
+          "type": "string"
+        },
+        "audio_codec": {
+          "type": "string"
+        }
+      }
+    },
+    "p1_runtime_safety": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "chromium_ran",
+        "model_downloaded"
+      ],
+      "properties": {
+        "chromium_ran": {
+          "const": false
+        },
+        "model_downloaded": {
+          "const": false
+        }
+      }
     }
   }
 }

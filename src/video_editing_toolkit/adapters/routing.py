@@ -14,7 +14,10 @@ from .delivery import DeliveryAdapter
 from .ffmpeg import FFmpegAdapter
 from .opencv import OpenCVAdapter
 from .project_edit import ProjectEditAdapter
+from .qc import QCAdapter
+from .remotion import RemotionAdapter
 from .scenedetect import PySceneDetectAdapter
+from .tts import GENERATE_VOICEOVER, TTSAdapter
 from .whisper import WhisperAdapter
 
 
@@ -192,6 +195,42 @@ CAPABILITY_ROUTES: Mapping[str, CapabilityRoute] = {
     ),
 }
 
+P1_CAPABILITY_ROUTES: Mapping[str, CapabilityRoute] = {
+    GENERATE_VOICEOVER: CapabilityRoute(
+        capability=GENERATE_VOICEOVER,
+        adapter_name=TTSAdapter.adapter_name,
+        adapter_class=TTSAdapter,
+        queue_topic="audio.tts.voiceover",
+        resource_limits=TTSAdapter.default_limits,
+    ),
+    "video.template.validate_remotion_template": CapabilityRoute(
+        capability="video.template.validate_remotion_template",
+        adapter_name=RemotionAdapter.adapter_name,
+        adapter_class=RemotionAdapter,
+        queue_topic="video.template.remotion",
+        resource_limits=RemotionAdapter.default_limits,
+    ),
+    "video.template.create_remotion_render_job": CapabilityRoute(
+        capability="video.template.create_remotion_render_job",
+        adapter_name=RemotionAdapter.adapter_name,
+        adapter_class=RemotionAdapter,
+        queue_topic="video.template.remotion",
+        resource_limits=RemotionAdapter.default_limits,
+    ),
+    "video.qc.generate_report": CapabilityRoute(
+        capability="video.qc.generate_report",
+        adapter_name=QCAdapter.adapter_name,
+        adapter_class=QCAdapter,
+        queue_topic="video.qc.report",
+        resource_limits=QCAdapter.default_limits,
+    ),
+}
+
+ALL_CAPABILITY_ROUTES: Mapping[str, CapabilityRoute] = {
+    **CAPABILITY_ROUTES,
+    **P1_CAPABILITY_ROUTES,
+}
+
 
 def resolve_route(capability: str) -> CapabilityRoute:
     try:
@@ -202,4 +241,18 @@ def resolve_route(capability: str) -> CapabilityRoute:
 
 def build_adapter(capability: str) -> BaseAdapter:
     route = resolve_route(capability)
+    return route.adapter_class()
+
+
+def resolve_p1_experimental_route(capability: str) -> CapabilityRoute:
+    """Resolve draft P1 routes through an explicit experimental entrypoint."""
+
+    try:
+        return P1_CAPABILITY_ROUTES[capability]
+    except KeyError as exc:
+        raise ValueError(f"No P1 experimental adapter route registered for capability {capability}.") from exc
+
+
+def build_p1_experimental_adapter(capability: str) -> BaseAdapter:
+    route = resolve_p1_experimental_route(capability)
     return route.adapter_class()
