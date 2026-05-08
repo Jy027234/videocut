@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import hashlib
+from dataclasses import fields
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -21,6 +22,7 @@ from video_editing_toolkit.agentctl_worker import (
 from video_editing_toolkit.agentctl_worker_runner import WorkerLocalExecutionTimeout
 from video_editing_toolkit.agentctl_worker_runner import WorkerLocalExecutionCancelled
 from video_editing_toolkit.adapters import P1_CAPABILITY_ROUTES
+from video_editing_toolkit.adapters.qc import GENERATE_MEDIA_INSPECTION_EVIDENCE
 from video_editing_toolkit.worker_pool import (
     DOCKER_EXECUTION_BACKEND,
     WORKER_POOL_CONTRACT,
@@ -385,6 +387,75 @@ def test_worker_rejects_all_p1_capabilities_before_materialization_or_execution(
         assert not artifact_root.exists() or not any(artifact_root.iterdir())
         assert_no_public_path_or_command_leak(result)
         assert_no_public_path_or_command_leak(complete_body)
+
+
+def test_worker_allowed_p1_qc_evidence_materializes_then_calls_local_runner(tmp_path: Path) -> None:
+    content = b"p1 controlled execution input bytes"
+    artifact_id = "artifact_p1_qc_media_source"
+    job = _leased_job(
+        job_id="rtjob_p1_qc_evidence_allowed",
+        capability=GENERATE_MEDIA_INSPECTION_EVIDENCE,
+        input_payload={
+            "project_id": "proj_p1_qc_evidence_allowed",
+            "artifact_ref": {"artifact_id": artifact_id},
+        },
+        artifact_refs=[_artifact_ref(artifact_id=artifact_id, content=content)],
+    )
+    job["payload"]["input_payload"]["policy_context"][
+        "allow_p1_qc_media_inspection_execution"
+    ] = True
+    fake = FakeAgentctlWorkerClient(lease_job=job)
+    fetcher = FakeArtifactBytesFetcher(
+        {
+            "http://platform.local/artifacts/download/input.mp4": content,
+        }
+    )
+    runner_calls: list[dict[str, Any]] = []
+
+    def runner(envelope: Mapping[str, Any], *, artifact_root: Path, **_kwargs: Any) -> dict[str, Any]:
+        runner_calls.append({"envelope": dict(envelope), "artifact_root": artifact_root})
+        local_path = LocalArtifactStore(artifact_root).open_local_path(artifact_id)
+        assert local_path is not None
+        assert local_path.read_bytes() == content
+        return {
+            "ok": True,
+            "processed": {
+                "status": "succeeded",
+                "trace_ref": envelope["trace_ref"],
+                "output": {
+                    "media_inspection_evidence": {"schema": "video_editing_toolkit.qc_media_inspection_evidence.v0"},
+                    "artifact_refs": [],
+                },
+                "usage_metrics": {"artifact_count": 1},
+            },
+        }
+
+    worker = VideoToolkitAgentctlWorker(
+        _config(
+            tmp_path,
+            artifact_base_url="http://platform.local",
+            allowed_capabilities=(GENERATE_MEDIA_INSPECTION_EVIDENCE,),
+            allowed_p1_capabilities=(GENERATE_MEDIA_INSPECTION_EVIDENCE,),
+        ),
+        client=fake,
+        artifact_fetcher=fetcher,
+        local_runner=runner,
+    )
+
+    result = worker.run_once()
+    complete_body = fake.requests[-1]["body"]
+
+    assert result["ok"] is True
+    assert result["status"] == "completed"
+    assert len(runner_calls) == 1
+    assert runner_calls[0]["envelope"]["capability"] == GENERATE_MEDIA_INSPECTION_EVIDENCE
+    assert fetcher.requests[0]["url"] == "http://platform.local/artifacts/download/input.mp4"
+    assert complete_body["status"] == "completed"
+    assert complete_body["metadata"]["artifact_lifecycle_summary"]["status"] == "completed"
+    assert complete_body["metadata"]["artifact_lifecycle_summary"]["artifact_ids"] == [artifact_id]
+    assert complete_body["metadata"]["usage_metrics"]["resource_class"] == "cpu_light"
+    assert_no_public_path_or_command_leak(result)
+    assert_no_public_path_or_command_leak(complete_body)
 
 
 def test_worker_default_policy_rejects_cpu_heavy_capability_before_materialization(tmp_path: Path) -> None:
@@ -997,29 +1068,36 @@ def _config(
     artifact_base_url: str | None = None,
     allowed_resource_classes: tuple[str, ...] = ("cpu_light",),
     allowed_capabilities: tuple[str, ...] = (),
+    allowed_p1_capabilities: tuple[str, ...] = (),
     max_job_input_bytes: int = 1024,
     max_run_timeout_seconds: int = 120,
     execution_mode: str = "in_process",
     max_attempts: int = 1,
 ) -> VideoToolkitWorkerConfig:
-    return VideoToolkitWorkerConfig(
-        base_url="http://agentctl.local",
-        token=token,
-        worker_id="video-worker-test",
-        backend_id="local",
-        ttl_seconds=60,
-        lease_seconds=30,
-        timeout_seconds=5,
-        artifact_root=tmp_path / "worker-artifacts",
-        artifact_base_url=artifact_base_url or "http://agentctl.local",
-        max_artifact_bytes=1024,
-        allowed_resource_classes=allowed_resource_classes,
-        allowed_capabilities=allowed_capabilities,
-        max_job_input_bytes=max_job_input_bytes,
-        max_run_timeout_seconds=max_run_timeout_seconds,
-        execution_mode=execution_mode,
-        max_attempts=max_attempts,
-    )
+    kwargs: dict[str, Any] = {
+        "base_url": "http://agentctl.local",
+        "token": token,
+        "worker_id": "video-worker-test",
+        "backend_id": "local",
+        "ttl_seconds": 60,
+        "lease_seconds": 30,
+        "timeout_seconds": 5,
+        "artifact_root": tmp_path / "worker-artifacts",
+        "artifact_base_url": artifact_base_url or "http://agentctl.local",
+        "max_artifact_bytes": 1024,
+        "allowed_resource_classes": allowed_resource_classes,
+        "allowed_capabilities": allowed_capabilities,
+        "max_job_input_bytes": max_job_input_bytes,
+        "max_run_timeout_seconds": max_run_timeout_seconds,
+        "execution_mode": execution_mode,
+        "max_attempts": max_attempts,
+    }
+    field_names = {field.name for field in fields(VideoToolkitWorkerConfig)}
+    if "allowed_p1_capabilities" in field_names:
+        kwargs["allowed_p1_capabilities"] = allowed_p1_capabilities
+    elif allowed_p1_capabilities:
+        raise AssertionError("VideoToolkitWorkerConfig must expose allowed_p1_capabilities for P1.10")
+    return VideoToolkitWorkerConfig(**kwargs)
 
 
 def _leased_job(

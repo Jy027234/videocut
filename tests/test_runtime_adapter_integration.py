@@ -12,7 +12,16 @@ from typing import Any
 import pytest
 
 from video_editing_toolkit.adapters import CAPABILITY_ROUTES, P1_CAPABILITY_ROUTES
+from video_editing_toolkit.adapters.audio_quality import AudioQualityAdapter
+from video_editing_toolkit.adapters.base import AdapterResult, AdapterStatus
+from video_editing_toolkit.adapters.ffmpeg import FFmpegAdapter
+from video_editing_toolkit.adapters.opencv import OpenCVAdapter
+from video_editing_toolkit.adapters.qc import (
+    GENERATE_MEDIA_INSPECTION_EVIDENCE,
+    QC_MEDIA_INSPECTION_EVIDENCE_SCHEMA,
+)
 from video_editing_toolkit.agentctl import run_agentctl
+from video_editing_toolkit.resource_guard import ErrorCode
 from video_editing_toolkit.runtime import (
     LocalRunService,
     RunRequest,
@@ -95,6 +104,179 @@ def test_agentctl_rejects_p1_experimental_capabilities_by_default(tmp_path: Path
         assert "download_url" not in rendered
         assert "storage_uri" not in rendered
         assert_no_public_path_or_command_leak(response)
+
+
+def test_agentctl_rejects_p1_qc_evidence_by_default_without_materializing(tmp_path: Path) -> None:
+    artifact_root = tmp_path / "default-p1-qc-reject"
+    response = run_agentctl(
+        {
+            "toolkit_id": "video-editing-toolkit",
+            "capability": GENERATE_MEDIA_INSPECTION_EVIDENCE,
+            "input": {
+                "project_id": "proj_p1_qc_reject",
+                "artifact_ref": {"artifact_id": "artifact_p1_qc_reject"},
+            },
+            "artifact_refs": [
+                {
+                    "artifact_id": "artifact_p1_qc_reject",
+                    "artifact_type": "source_video",
+                    "mime_type": "video/mp4",
+                    "size_bytes": 12,
+                    "checksum": "sha256:" + "b" * 64,
+                    "download_url": "/local/artifacts/private/source.mp4",
+                    "storage_uri": "s3://internal/private/source.mp4",
+                }
+            ],
+        },
+        artifact_root=artifact_root,
+    )
+
+    assert response["ok"] is False
+    assert response["processed"]["status"] == "failed"
+    assert response["processed"]["error_code"] == "handler_not_registered"
+    assert response["processed"]["artifact_refs"] == []
+    assert not artifact_root.exists() or not any(artifact_root.iterdir())
+    assert_no_public_path_or_command_leak(response)
+
+
+def test_agentctl_allowed_p1_qc_evidence_still_requires_request_policy_opt_in(
+    monkeypatch: Any,
+    tmp_path: Path,
+) -> None:
+    def fail_if_called(*_args: Any, **_kwargs: Any) -> AdapterResult:
+        raise AssertionError("QC evidence must fail before downstream inspection adapters")
+
+    monkeypatch.setattr(FFmpegAdapter, "invoke", fail_if_called)
+    monkeypatch.setattr(AudioQualityAdapter, "invoke", fail_if_called)
+    monkeypatch.setattr(OpenCVAdapter, "invoke", fail_if_called)
+
+    artifact_root = tmp_path / "allowed-p1-qc-no-policy"
+    artifact_id = "artifact_allowed_p1_qc_no_policy"
+    tenant_id = "tenant_allowed_p1_qc_no_policy"
+    LocalArtifactStore(artifact_root).put_bytes(
+        content=b"pre-materialized source bytes",
+        artifact_id=artifact_id,
+        artifact_type="source_video",
+        owner_tenant_id=tenant_id,
+        created_by_run_id="fixture_source",
+        filename="source.mp4",
+        mime_type="video/mp4",
+    )
+
+    response = run_agentctl(
+        {
+            "toolkit_id": "video-editing-toolkit",
+            "capability": GENERATE_MEDIA_INSPECTION_EVIDENCE,
+            "input": {
+                "project_id": "proj_allowed_p1_qc_no_policy",
+                "artifact_ref": {"artifact_id": artifact_id},
+            },
+            "artifact_refs": [
+                {
+                    "artifact_id": artifact_id,
+                    "artifact_type": "source_video",
+                    "mime_type": "video/mp4",
+                    "size_bytes": 12,
+                    "checksum": "sha256:" + "e" * 64,
+                }
+            ],
+            "policy_context": {
+                "tenant_id": tenant_id,
+                "user_id": "user_allowed_p1_qc_no_policy",
+            },
+        },
+        artifact_root=artifact_root,
+        allowed_p1_capabilities=(GENERATE_MEDIA_INSPECTION_EVIDENCE,),
+    )
+
+    assert response["ok"] is False
+    assert response["processed"]["status"] == "failed"
+    assert response["processed"]["error_code"] == "artifact_ref.access_denied"
+    assert response["processed"]["artifact_refs"] == []
+    assert_no_public_path_or_command_leak(response)
+
+
+def test_agentctl_allowed_p1_qc_evidence_registers_and_executes_local_runner(
+    monkeypatch: Any,
+    tmp_path: Path,
+) -> None:
+    artifact_root = tmp_path / "allowed-p1-qc-evidence"
+    artifact_id = "artifact_allowed_p1_qc_source"
+    tenant_id = "tenant_allowed_p1_qc"
+    LocalArtifactStore(artifact_root).put_bytes(
+        content=b"pre-materialized source bytes",
+        artifact_id=artifact_id,
+        artifact_type="source_video",
+        owner_tenant_id=tenant_id,
+        created_by_run_id="fixture_source",
+        filename="source.mp4",
+        mime_type="video/mp4",
+    )
+
+    monkeypatch.setattr(
+        FFmpegAdapter,
+        "invoke",
+        lambda self, request: AdapterResult(
+            status=AdapterStatus.SUCCEEDED,
+            output={"probe": {"duration_seconds": 1.0, "streams": [{"codec_type": "video"}]}},
+        ),
+    )
+    monkeypatch.setattr(
+        AudioQualityAdapter,
+        "invoke",
+        lambda self, request: AdapterResult(
+            status=AdapterStatus.FAILED,
+            error_code=ErrorCode.INVALID_REQUEST,
+            error_message="audio fixture unavailable",
+        ),
+    )
+    monkeypatch.setattr(
+        OpenCVAdapter,
+        "invoke",
+        lambda self, request: AdapterResult(
+            status=AdapterStatus.SUCCEEDED,
+            output={"quality_summary": {"mean_brightness": 100.0}},
+        ),
+    )
+
+    response = run_agentctl(
+        {
+            "toolkit_id": "video-editing-toolkit",
+            "capability": GENERATE_MEDIA_INSPECTION_EVIDENCE,
+            "input": {
+                "project_id": "proj_allowed_p1_qc",
+                "artifact_ref": {"artifact_id": artifact_id},
+            },
+            "artifact_refs": [
+                {
+                    "artifact_id": artifact_id,
+                    "artifact_type": "source_video",
+                    "mime_type": "video/mp4",
+                    "size_bytes": 12,
+                    "checksum": "sha256:" + "c" * 64,
+                    "storage_uri": "s3://internal/private/source.mp4",
+                }
+            ],
+            "policy_context": {
+                "tenant_id": tenant_id,
+                "user_id": "user_allowed_p1_qc",
+                "allow_p1_qc_media_inspection_execution": True,
+            },
+        },
+        artifact_root=artifact_root,
+        allowed_p1_capabilities=(GENERATE_MEDIA_INSPECTION_EVIDENCE,),
+    )
+
+    output = response["processed"]["output"]
+    evidence = output["media_inspection_evidence"]
+    assert response["ok"] is True
+    assert response["processed"]["status"] == "succeeded"
+    assert output["adapter_name"] == "qc"
+    assert evidence["schema"] == QC_MEDIA_INSPECTION_EVIDENCE_SCHEMA
+    assert evidence["summary"]["inspection_result_count"] == 3
+    assert output["qc_media_inspection_evidence_artifact_ref"]["artifact_type"] == "qc_media_inspection_evidence_json"
+    assert len(response["processed"]["artifact_refs"]) == 1
+    assert_no_public_path_or_command_leak(response)
 
 
 def test_local_runtime_processes_registered_project_edit_adapter(tmp_path) -> None:

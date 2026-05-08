@@ -10,7 +10,10 @@ from video_editing_toolkit.adapters import (
     AdapterContext,
     AdapterRequest,
     AdapterStatus,
+    P1_CAPABILITY_ROUTES,
+    build_p1_experimental_adapter,
     build_adapter,
+    resolve_p1_experimental_route,
     resolve_route,
 )
 from video_editing_toolkit.adapters import ArtifactRef as AdapterArtifactRef
@@ -22,10 +25,9 @@ def adapter_run_handler(
     request: RunRequest,
     artifact_store: LocalArtifactStore,
 ) -> RunResponse:
-    """Handle a local run through the registered P0 adapter route."""
+    """Handle a local run through a registered adapter route."""
 
-    route = resolve_route(request.capability)
-    adapter = build_adapter(request.capability)
+    route, adapter = _route_and_adapter(request.capability)
     resolved_input = _with_worker_artifact_paths(request, artifact_store, adapter.adapter_name)
     if isinstance(resolved_input, RunResponse):
         return resolved_input
@@ -85,6 +87,27 @@ def register_p0_adapter_handlers(service: Any) -> None:
         service.register_handler("video-editing-toolkit", capability, adapter_run_handler)
 
 
+def register_p1_experimental_adapter_handlers(
+    service: Any,
+    *,
+    allowed_p1_capabilities: tuple[str, ...],
+) -> None:
+    """Register explicitly allowed P1 experimental routes for local execution."""
+
+    for capability in allowed_p1_capabilities:
+        if capability in P1_CAPABILITY_ROUTES:
+            service.register_handler("video-editing-toolkit", capability, adapter_run_handler)
+
+
+def _route_and_adapter(capability: str) -> tuple[Any, Any]:
+    if capability in P1_CAPABILITY_ROUTES:
+        return (
+            resolve_p1_experimental_route(capability),
+            build_p1_experimental_adapter(capability),
+        )
+    return resolve_route(capability), build_adapter(capability)
+
+
 def _to_adapter_artifact_ref(ref: ArtifactRef) -> AdapterArtifactRef:
     return AdapterArtifactRef(
         ref=ref.artifact_id,
@@ -111,7 +134,7 @@ def _with_worker_artifact_paths(
         for key, value in request.input.items()
         if not key.startswith("_")
     }
-    if adapter_name in {"asset_index", "delivery", "ffmpeg", "project_edit"}:
+    if adapter_name in {"asset_index", "delivery", "ffmpeg", "project_edit", "qc"}:
         resolved["_artifact_store"] = artifact_store
 
     requested_ids = _input_artifact_ids(request.input)
@@ -225,6 +248,10 @@ def _artifact_resolution_failure(
 
 def _policy_context_dict(request: RunRequest) -> dict[str, Any]:
     payload = asdict(request.policy_context)
+    data_policy = payload.get("data_policy")
+    if isinstance(data_policy, dict):
+        if data_policy.get("allow_p1_qc_media_inspection_execution") is True:
+            payload["allow_p1_qc_media_inspection_execution"] = True
     payload["artifact_store_public_base_path"] = artifact_store_hint()
     return payload
 

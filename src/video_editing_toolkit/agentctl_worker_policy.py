@@ -6,7 +6,11 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
-from video_editing_toolkit.adapters import P1_CAPABILITY_ROUTES, resolve_route
+from video_editing_toolkit.adapters import (
+    P1_CAPABILITY_ROUTES,
+    resolve_p1_experimental_route,
+    resolve_route,
+)
 from video_editing_toolkit.resource_guard import CPU_LIGHT_LIMITS, ErrorCode
 
 
@@ -17,6 +21,7 @@ DEFAULT_ALLOWED_RESOURCE_CLASSES = ("cpu_light",)
 class WorkerExecutionPolicyConfig:
     allowed_resource_classes: tuple[str, ...] = DEFAULT_ALLOWED_RESOURCE_CLASSES
     allowed_capabilities: tuple[str, ...] = ()
+    allowed_p1_capabilities: tuple[str, ...] = ()
     max_job_input_bytes: int = CPU_LIGHT_LIMITS.max_input_bytes
     max_run_timeout_seconds: int = CPU_LIGHT_LIMITS.timeout_seconds
 
@@ -54,7 +59,11 @@ def validate_worker_execution_policy(
     """Validate a leased toolkit envelope before materialization and execution."""
 
     capability = _capability(envelope)
-    if config.allowed_capabilities and capability not in set(config.allowed_capabilities):
+    if (
+        config.allowed_capabilities
+        and capability not in set(config.allowed_capabilities)
+        and capability not in set(config.allowed_p1_capabilities)
+    ):
         raise WorkerExecutionPolicyError(
             "worker.capability_not_allowed",
             "Capability is not enabled for this worker.",
@@ -62,20 +71,29 @@ def validate_worker_execution_policy(
         )
 
     if capability in P1_CAPABILITY_ROUTES:
-        raise WorkerExecutionPolicyError(
-            "worker.p1_capability_disabled",
-            "P1 capability routes are disabled for this worker by default.",
-            capability=capability,
-        )
-
-    try:
-        route = resolve_route(capability)
-    except ValueError as exc:
-        raise WorkerExecutionPolicyError(
-            "worker.capability_unknown",
-            "Capability is not registered for this worker.",
-            capability=capability,
-        ) from exc
+        if capability not in set(config.allowed_p1_capabilities):
+            raise WorkerExecutionPolicyError(
+                "worker.p1_capability_disabled",
+                "P1 capability routes are disabled for this worker by default.",
+                capability=capability,
+            )
+        try:
+            route = resolve_p1_experimental_route(capability)
+        except ValueError as exc:
+            raise WorkerExecutionPolicyError(
+                "worker.capability_unknown",
+                "Capability is not registered for this worker.",
+                capability=capability,
+            ) from exc
+    else:
+        try:
+            route = resolve_route(capability)
+        except ValueError as exc:
+            raise WorkerExecutionPolicyError(
+                "worker.capability_unknown",
+                "Capability is not registered for this worker.",
+                capability=capability,
+            ) from exc
 
     resource_class = route.resource_limits.resource_class.value
     allowed_classes = set(config.allowed_resource_classes)

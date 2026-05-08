@@ -18,6 +18,7 @@ from video_editing_toolkit.runtime import (
     RunRequest,
     register_p0_adapter_handlers,
 )
+from video_editing_toolkit.runtime.adapter_handler import register_p1_experimental_adapter_handlers
 from video_editing_toolkit.storage import ArtifactRef, LocalArtifactStore
 
 
@@ -81,12 +82,17 @@ def main(argv: Sequence[str] | None = None) -> int:
         "--artifact-root",
         help="Optional local artifact store root. Never returned in public JSON.",
     )
+    parser.add_argument(
+        "--allowed-p1-capabilities",
+        help="Comma-separated P1 experimental capabilities to register for this local run.",
+    )
     args = parser.parse_args(argv)
 
     raw_input = args.input_json if args.input_json is not None else sys.stdin.read()
     response, exit_code = run_agentctl_json(
         raw_input,
         artifact_root=args.artifact_root,
+        allowed_p1_capabilities=parse_csv_tuple(args.allowed_p1_capabilities),
     )
     print(json.dumps(response, ensure_ascii=False, sort_keys=True))
     return exit_code
@@ -96,6 +102,7 @@ def run_agentctl_json(
     raw_input: str,
     *,
     artifact_root: str | Path | None = None,
+    allowed_p1_capabilities: Sequence[str] | None = None,
 ) -> tuple[dict[str, Any], int]:
     try:
         payload = json.loads(raw_input)
@@ -112,7 +119,11 @@ def run_agentctl_json(
         ), 2
 
     try:
-        response = run_agentctl(payload, artifact_root=artifact_root)
+        response = run_agentctl(
+            payload,
+            artifact_root=artifact_root,
+            allowed_p1_capabilities=allowed_p1_capabilities,
+        )
     except ValueError as exc:
         return _error_response("agentctl.invalid_request", str(exc)), 2
     return response, 0
@@ -122,6 +133,7 @@ def run_agentctl(
     payload: Mapping[str, Any],
     *,
     artifact_root: str | Path | None = None,
+    allowed_p1_capabilities: Sequence[str] | None = None,
 ) -> dict[str, Any]:
     toolkit_id = _required_string(payload, "toolkit_id")
     capability = _required_string(payload, "capability")
@@ -129,7 +141,14 @@ def run_agentctl(
     if not isinstance(input_payload, Mapping):
         raise ValueError("input must be a JSON object when provided.")
 
-    policy_context = _policy_context(payload)
+    selected_allowed_p1 = tuple(allowed_p1_capabilities or ())
+    policy_context = _policy_context(
+        _payload_with_p1_policy_opt_in(
+            payload,
+            capability=capability,
+            allowed_p1_capabilities=selected_allowed_p1,
+        )
+    )
     run_id = _optional_string(payload.get("run_id"))
     tool_call_id = _optional_string(payload.get("tool_call_id"))
     trace_ref = _optional_string(payload.get("trace_ref")) or _optional_string(payload.get("trace_id"))
@@ -166,6 +185,10 @@ def run_agentctl(
         artifact_store=LocalArtifactStore(selected_root)
     )
     register_p0_adapter_handlers(service)
+    register_p1_experimental_adapter_handlers(
+        service,
+        allowed_p1_capabilities=selected_allowed_p1,
+    )
 
     queued = service.submit_public(request)
     processed = service.process_next_public()
@@ -223,6 +246,40 @@ def _context_string(
 
 def _context_mapping(value: Any) -> dict[str, Any]:
     return dict(value) if isinstance(value, Mapping) else {}
+
+
+def parse_csv_tuple(value: str | None) -> tuple[str, ...]:
+    if not value:
+        return ()
+    return tuple(item.strip() for item in value.split(",") if item.strip())
+
+
+def _payload_with_p1_policy_opt_in(
+    payload: Mapping[str, Any],
+    *,
+    capability: str,
+    allowed_p1_capabilities: Sequence[str],
+) -> Mapping[str, Any]:
+    if capability != "video.qc.generate_media_inspection_evidence":
+        return payload
+    if capability not in set(allowed_p1_capabilities):
+        return payload
+
+    raw_context = payload.get("policy_context")
+    policy_context = dict(raw_context) if isinstance(raw_context, Mapping) else {}
+    raw_data_policy = policy_context.get("data_policy")
+    data_policy = dict(raw_data_policy) if isinstance(raw_data_policy, Mapping) else {}
+    if (
+        policy_context.get("allow_p1_qc_media_inspection_execution") is not True
+        and data_policy.get("allow_p1_qc_media_inspection_execution") is not True
+    ):
+        return payload
+
+    cloned = dict(payload)
+    data_policy["allow_p1_qc_media_inspection_execution"] = True
+    policy_context["data_policy"] = data_policy
+    cloned["policy_context"] = policy_context
+    return cloned
 
 
 def _artifact_refs(

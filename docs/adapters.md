@@ -241,6 +241,18 @@ preflight or explicitly controlled-worker only:
 | `video.template.create_remotion_render_job` | `remotion` | Dispatcher job descriptor, typed dispatcher preflight attestation, and readiness checks only; no Remotion render execution. |
 | `video.render.export_project_format` | `project_export` | FCPXML interchange descriptor or artifact only; no DaVinci Resolve, Final Cut Pro, shell, or local app automation. |
 
+P1.10 keeps these capabilities out of the product default route table. The
+local `agentctl` runner and external worker only register a P1 adapter when an
+operator explicitly supplies `allowed_p1_capabilities` / `--allowed-p1-capabilities`
+or `VIDEO_TOOLKIT_ALLOWED_P1_CAPABILITIES`. For
+`video.qc.generate_media_inspection_evidence`, the request policy must also set
+`allow_p1_qc_media_inspection_execution=true`; otherwise the adapter fails
+before downstream FFmpeg, audio, or OpenCV inspection. The controlled local loop
+may materialize input artifact refs into the worker artifact store before
+calling `run_agentctl`, but public responses continue to return artifact refs
+only and must not include local paths, raw commands, storage URIs, or signed
+download URLs.
+
 The MOSS-TTS-Nano preflight expects a local ONNX bundle root containing
 `MOSS-TTS-Nano-100M-ONNX` and `MOSS-Audio-Tokenizer-Nano-ONNX`, or explicit TTS
 and codec bundle paths. Public output reports only aggregate readiness and

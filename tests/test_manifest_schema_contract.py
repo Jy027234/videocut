@@ -152,7 +152,7 @@ def test_p0_and_p1_manifests_validate_against_toolkit_manifest_schema() -> None:
     validator.validate(p0_manifest)
     validator.validate(p1_manifest)
     assert p0_manifest["version"].endswith("-p0")
-    assert p1_manifest["version"].endswith("-p1.9")
+    assert p1_manifest["version"].endswith("-p1.10")
 
 
 def test_p1_manifest_extends_p0_without_default_enabling_p1_or_sensitive_capabilities() -> None:
@@ -209,6 +209,21 @@ def test_p1_manifest_extends_p0_without_default_enabling_p1_or_sensitive_capabil
         "allow_raw_command": False,
         "platform_core_repository_mutation": False,
         "enable_p1_disabled_capabilities": False,
+    }
+    assert p1_manifest["sandbox_policy"]["p1_10_local_controlled_execution_loop"] == {
+        "runtime_mode": "local_controlled_execution",
+        "default_product_enablement": False,
+        "explicit_worker_allowlist_required": True,
+        "allowed_p1_capabilities_key": "allowed_p1_capabilities",
+        "env_allowlist": "VIDEO_TOOLKIT_ALLOWED_P1_CAPABILITIES",
+        "local_runner": "video_editing_toolkit.agentctl.run_agentctl",
+        "artifact_materialization": "before_local_runner",
+        "artifact_ref_only": True,
+        "network_access": "disabled_by_default",
+        "return_local_paths": False,
+        "allow_raw_command": False,
+        "platform_core_repository_mutation": False,
+        "release_center_publication": "no_go_until_product_rollout",
     }
     assert (
         p1_entries["video.qc.build_evidence_packet"]["sandbox_policy"]["p1_3_runtime_mode"]

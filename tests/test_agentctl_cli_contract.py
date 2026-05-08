@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from conftest import REPO_ROOT, assert_no_public_path_or_command_leak, walk_json
+from video_editing_toolkit.adapters.qc import GENERATE_MEDIA_INSPECTION_EVIDENCE
 
 
 def test_agentctl_input_json_outputs_caller_safe_create_project(tmp_path: Path) -> None:
@@ -115,6 +116,52 @@ def test_agentctl_unknown_capability_returns_stable_failure(tmp_path: Path) -> N
     assert body["processed"]["error_code"] == "handler_not_registered"
     assert "No local handler registered" in body["processed"]["error_message"]
     _assert_agentctl_public_safe(body, artifact_root)
+
+
+def test_agentctl_cli_rejects_p1_qc_evidence_by_default(tmp_path: Path) -> None:
+    artifact_root = tmp_path / "agentctl-artifacts"
+    payload = {
+        "toolkit_id": "video-editing-toolkit",
+        "capability": GENERATE_MEDIA_INSPECTION_EVIDENCE,
+        "input": {
+            "project_id": "proj_cli_p1_reject",
+            "artifact_ref": {"artifact_id": "artifact_cli_p1_reject"},
+        },
+        "artifact_refs": [
+            {
+                "artifact_id": "artifact_cli_p1_reject",
+                "artifact_type": "source_video",
+                "mime_type": "video/mp4",
+                "size_bytes": 123,
+                "checksum": "sha256:" + "d" * 64,
+                "storage_uri": "s3://internal/private/source.mp4",
+                "download_url": "/local/artifacts/private/source.mp4?token=secret",
+            }
+        ],
+    }
+
+    result = _run_agentctl(
+        "--input-json",
+        json.dumps(payload),
+        "--artifact-root",
+        str(artifact_root),
+    )
+
+    assert result.returncode == 0, result.stderr
+    body = _json_stdout(result)
+    assert body["ok"] is False
+    assert body["processed"]["status"] == "failed"
+    assert body["processed"]["error_code"] == "handler_not_registered"
+    assert body["processed"]["artifact_refs"] == []
+    assert not artifact_root.exists() or not any(artifact_root.iterdir())
+    _assert_agentctl_public_safe(body, artifact_root, "secret")
+
+
+def test_agentctl_cli_help_exposes_explicit_p1_allowlist_flag() -> None:
+    result = _run_agentctl("--help")
+
+    assert result.returncode == 0
+    assert "--allowed-p1-capabilities" in result.stdout
 
 
 def _run_agentctl(*args: str, stdin: str | None = None) -> subprocess.CompletedProcess[str]:

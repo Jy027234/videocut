@@ -3,7 +3,7 @@
   "toolkit_id": "video-editing-toolkit",
   "display_name": "Video Editing Toolkit",
   "category": "video_editing",
-  "version": "0.2.0-p1.9",
+  "version": "0.2.0-p1.10",
   "status": "draft",
   "runtime_adapter": {
     "type": "local_worker",
@@ -88,6 +88,21 @@
       "allow_raw_command": false,
       "platform_core_repository_mutation": false,
       "enable_p1_disabled_capabilities": false
+    },
+    "p1_10_local_controlled_execution_loop": {
+      "runtime_mode": "local_controlled_execution",
+      "default_product_enablement": false,
+      "explicit_worker_allowlist_required": true,
+      "allowed_p1_capabilities_key": "allowed_p1_capabilities",
+      "env_allowlist": "VIDEO_TOOLKIT_ALLOWED_P1_CAPABILITIES",
+      "local_runner": "video_editing_toolkit.agentctl.run_agentctl",
+      "artifact_materialization": "before_local_runner",
+      "artifact_ref_only": true,
+      "network_access": "disabled_by_default",
+      "return_local_paths": false,
+      "allow_raw_command": false,
+      "platform_core_repository_mutation": false,
+      "release_center_publication": "no_go_until_product_rollout"
     }
   },
   "artifact_policy": {

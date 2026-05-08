@@ -104,6 +104,7 @@ class VideoToolkitWorkerConfig:
     max_artifact_bytes: int = DEFAULT_MAX_ARTIFACT_BYTES
     allowed_resource_classes: tuple[str, ...] = DEFAULT_ALLOWED_RESOURCE_CLASSES
     allowed_capabilities: tuple[str, ...] = ()
+    allowed_p1_capabilities: tuple[str, ...] = ()
     max_job_input_bytes: int = 512 * 1024 * 1024
     max_run_timeout_seconds: int = 120
     execution_mode: str = IN_PROCESS_EXECUTION_MODE
@@ -130,6 +131,7 @@ class VideoToolkitWorkerConfig:
         max_artifact_bytes: int | None = None,
         allowed_resource_classes: Sequence[str] | None = None,
         allowed_capabilities: Sequence[str] | None = None,
+        allowed_p1_capabilities: Sequence[str] | None = None,
         max_job_input_bytes: int | None = None,
         max_run_timeout_seconds: int | None = None,
         execution_mode: str | None = None,
@@ -191,6 +193,9 @@ class VideoToolkitWorkerConfig:
             allowed_capabilities=tuple(allowed_capabilities)
             if allowed_capabilities is not None
             else parse_csv_tuple(os.environ.get("VIDEO_TOOLKIT_ALLOWED_CAPABILITIES")),
+            allowed_p1_capabilities=tuple(allowed_p1_capabilities)
+            if allowed_p1_capabilities is not None
+            else parse_csv_tuple(os.environ.get("VIDEO_TOOLKIT_ALLOWED_P1_CAPABILITIES")),
             max_job_input_bytes=max_job_input_bytes
             if max_job_input_bytes is not None
             else _int_env("VIDEO_TOOLKIT_MAX_JOB_INPUT_BYTES", 512 * 1024 * 1024),
@@ -231,6 +236,7 @@ class VideoToolkitWorkerConfig:
         return WorkerExecutionPolicyConfig(
             allowed_resource_classes=self.allowed_resource_classes,
             allowed_capabilities=self.allowed_capabilities,
+            allowed_p1_capabilities=self.allowed_p1_capabilities,
             max_job_input_bytes=self.max_job_input_bytes,
             max_run_timeout_seconds=self.max_run_timeout_seconds,
         )
@@ -375,6 +381,7 @@ class VideoToolkitAgentctlWorker:
                     "artifact_materialization": "controlled_download_to_local_store",
                     "allowed_resource_classes": list(self.config.allowed_resource_classes),
                     "allowed_capabilities": list(self.config.allowed_capabilities),
+                    "allowed_p1_capabilities": list(self.config.allowed_p1_capabilities),
                     "max_job_input_bytes": self.config.max_job_input_bytes,
                     "max_run_timeout_seconds": self.config.max_run_timeout_seconds,
                     "execution_mode": self.config.execution_mode,
@@ -480,6 +487,7 @@ class VideoToolkitAgentctlWorker:
                 cancellation_check_interval_seconds=self.config.cancellation_check_interval_seconds,
                 process_kill_grace_seconds=self.config.process_kill_grace_seconds,
                 execution_pool_registry=self.execution_pool_registry,
+                allowed_p1_capabilities=self.config.allowed_p1_capabilities,
             )
             status = "completed" if local_result.get("ok") is True else "failed"
             trace_ref = _trace_ref_from_agentctl_result(local_result) or trace_ref
@@ -731,6 +739,7 @@ def _invoke_local_runner(
     cancellation_check_interval_seconds: float,
     process_kill_grace_seconds: float,
     execution_pool_registry: WorkerExecutionPoolRegistry,
+    allowed_p1_capabilities: tuple[str, ...],
 ) -> dict[str, Any]:
     kwargs: dict[str, Any] = {
         "artifact_root": artifact_root,
@@ -738,6 +747,7 @@ def _invoke_local_runner(
         "timeout_seconds": timeout_seconds,
     }
     optional_kwargs = {
+        "allowed_p1_capabilities": allowed_p1_capabilities,
         "cancellation_checker": cancellation_checker,
         "cancel_event": cancel_event,
         "cancellation_check_interval_seconds": cancellation_check_interval_seconds,
@@ -782,6 +792,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument(
         "--allowed-capabilities",
         help="Comma-separated capability allowlist for this worker. Defaults to all known capabilities in allowed resource classes.",
+    )
+    parser.add_argument(
+        "--allowed-p1-capabilities",
+        help="Comma-separated P1 experimental capability allowlist. Defaults to disabled.",
     )
     parser.add_argument("--max-job-input-bytes", type=int, help="Maximum declared input bytes per job.")
     parser.add_argument("--max-run-timeout-seconds", type=int, help="Maximum route timeout this worker accepts.")
@@ -836,6 +850,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         else None,
         allowed_capabilities=parse_csv_tuple(args.allowed_capabilities)
         if args.allowed_capabilities is not None
+        else None,
+        allowed_p1_capabilities=parse_csv_tuple(args.allowed_p1_capabilities)
+        if args.allowed_p1_capabilities is not None
         else None,
         max_job_input_bytes=args.max_job_input_bytes,
         max_run_timeout_seconds=args.max_run_timeout_seconds,

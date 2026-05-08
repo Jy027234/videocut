@@ -72,6 +72,7 @@ def run_local_agentctl(
     artifact_root: str | Path,
     execution_mode: str,
     timeout_seconds: int | float,
+    allowed_p1_capabilities: tuple[str, ...] = (),
     cancellation_checker: Callable[[], bool] | None = None,
     cancel_event: Any | None = None,
     cancellation_check_interval_seconds: int | float = 0.25,
@@ -81,12 +82,17 @@ def run_local_agentctl(
     if _cancel_requested(cancellation_checker=cancellation_checker, cancel_event=cancel_event):
         raise WorkerLocalExecutionCancelled()
     if execution_mode == IN_PROCESS_EXECUTION_MODE:
-        return run_agentctl(envelope, artifact_root=artifact_root)
+        return run_agentctl(
+            envelope,
+            artifact_root=artifact_root,
+            allowed_p1_capabilities=allowed_p1_capabilities,
+        )
     if execution_mode == SUBPROCESS_EXECUTION_MODE:
         return run_agentctl_subprocess(
             envelope,
             artifact_root=artifact_root,
             timeout_seconds=timeout_seconds,
+            allowed_p1_capabilities=allowed_p1_capabilities,
             cancellation_checker=cancellation_checker,
             cancel_event=cancel_event,
             cancellation_check_interval_seconds=cancellation_check_interval_seconds,
@@ -106,6 +112,7 @@ def run_agentctl_subprocess(
     *,
     artifact_root: str | Path,
     timeout_seconds: int | float,
+    allowed_p1_capabilities: tuple[str, ...] = (),
     cancellation_checker: Callable[[], bool] | None = None,
     cancel_event: Any | None = None,
     cancellation_check_interval_seconds: int | float = 0.25,
@@ -118,6 +125,8 @@ def run_agentctl_subprocess(
         "--artifact-root",
         str(artifact_root),
     ]
+    if allowed_p1_capabilities:
+        command.extend(["--allowed-p1-capabilities", ",".join(allowed_p1_capabilities)])
     input_payload = json.dumps(dict(envelope), ensure_ascii=False)
     if cancellation_checker is not None or cancel_event is not None:
         return _run_subprocess_with_cancellation(
