@@ -12,6 +12,19 @@ from .base import AdapterRequest, AdapterResult, AdapterStatus, BaseAdapter
 
 ANALYZE_FRAMES = "video.analysis.analyze_frames"
 CHECK_VISUAL_QUALITY = "video.analysis.check_visual_quality"
+_VIDEO_SUFFIXES = frozenset(
+    {
+        ".avi",
+        ".m4v",
+        ".mkv",
+        ".mov",
+        ".mp4",
+        ".mpeg",
+        ".mpg",
+        ".webm",
+        ".wmv",
+    }
+)
 
 
 class OpenCVAdapter(BaseAdapter):
@@ -107,13 +120,17 @@ class OpenCVAdapter(BaseAdapter):
         if frame_limit is None:
             return self._invalid_options("check_visual_quality")
 
-        image = cv2.imread(str(media_path), cv2.IMREAD_COLOR)
-        if image is not None:
-            metrics = [self._frame_metrics(cv2, image, index=1)]
-            media_kind = "image"
-        else:
+        if self._looks_like_video_media(media_path):
             metrics = self._sample_video_metrics(cv2, media_path, frame_limit)
             media_kind = "video"
+        else:
+            image = cv2.imread(str(media_path), cv2.IMREAD_COLOR)
+            if image is not None:
+                metrics = [self._frame_metrics(cv2, image, index=1)]
+                media_kind = "image"
+            else:
+                metrics = self._sample_video_metrics(cv2, media_path, frame_limit)
+                media_kind = "video"
 
         if not metrics:
             return AdapterResult(
@@ -224,6 +241,9 @@ class OpenCVAdapter(BaseAdapter):
             return [0]
         last_index = frame_count - 1
         return sorted({round(last_index * index / (count - 1)) for index in range(count)})
+
+    def _looks_like_video_media(self, media_path: Path) -> bool:
+        return media_path.suffix.casefold() in _VIDEO_SUFFIXES
 
     def _frame_limit(self, request: AdapterRequest, *, default: int) -> int | None:
         value = request.input.get("frame_limit", request.input.get("max_frames", default))

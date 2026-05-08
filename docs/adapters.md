@@ -258,6 +258,21 @@ the analysis extras or `static-ffmpeg` and set `VIDEO_TOOLKIT_USE_STATIC_FFMPEG=
 This opt-in only amends the private worker process `PATH`; adapter outputs still
 report dependency status and caller-safe evidence without returning binary paths.
 
+The repeatable local smoke wrapper is available as `video-toolkit-p1-qc-smoke`.
+It packages a local source video into the local artifact store, invokes
+`video.qc.generate_media_inspection_evidence` through `run_agentctl` with the
+P1 allowlist and request policy opt-in, and prints only a compact caller-safe
+summary. Use `--result-json` when a full caller-safe smoke artifact is needed
+for Platform Core handoff rehearsal:
+
+```powershell
+video-toolkit-p1-qc-smoke `
+  --input-video D:\app\video\素材1\no1_sample_style_edit.mp4 `
+  --artifact-root D:\app\video\素材1\_p1_12_qc_smoke_artifacts `
+  --result-json D:\app\video\素材1\p1_12_qc_smoke_result.json `
+  --use-static-ffmpeg
+```
+
 The MOSS-TTS-Nano preflight expects a local ONNX bundle root containing
 `MOSS-TTS-Nano-100M-ONNX` and `MOSS-Audio-Tokenizer-Nano-ONNX`, or explicit TTS
 and codec bundle paths. Public output reports only aggregate readiness and
