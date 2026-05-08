@@ -3,7 +3,7 @@
   "toolkit_id": "video-editing-toolkit",
   "display_name": "Video Editing Toolkit",
   "category": "video_editing",
-  "version": "0.2.0-p1.5",
+  "version": "0.2.0-p1.6",
   "status": "draft",
   "runtime_adapter": {
     "type": "local_worker",
@@ -1444,7 +1444,7 @@
     },
     {
       "capability": "video.template.create_remotion_render_job",
-      "version": "0.2.0-p1.1",
+      "version": "0.2.0-p1.6",
       "status": "disabled",
       "input_schema": {
         "$ref": "../schemas/capability-io.schema.json#/$defs/remotion_render_job_input"
@@ -1487,6 +1487,8 @@
         "return_local_paths": false,
         "network_access": "disabled_by_default",
         "p1_1_runtime_mode": "contract_only_until_adapter_enabled",
+        "p1_6_dispatcher_attestation": "required_before_real_render",
+        "dispatcher_attestation_required_before_real_render": true,
         "run_chromium": false,
         "execution_mode": "job_descriptor_only"
       }

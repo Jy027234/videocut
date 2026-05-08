@@ -237,7 +237,7 @@ preflight-only:
 | `video.qc.build_evidence_packet` | `qc` | Evidence packet descriptor and optional JSON artifact from caller-safe evidence only; no media inspection execution. |
 | `video.qc.plan_media_inspection` | `qc` | Plan-only media inspection contract; no media fetch, binary probe, frame sampling, audio analysis, or visual analysis execution. |
 | `video.template.validate_remotion_template` | `remotion` | Template metadata and prop validation only; no Node or Chromium execution. |
-| `video.template.create_remotion_render_job` | `remotion` | Dispatcher job descriptor and readiness checks only; no Remotion render execution. |
+| `video.template.create_remotion_render_job` | `remotion` | Dispatcher job descriptor, typed dispatcher preflight attestation, and readiness checks only; no Remotion render execution. |
 | `video.render.export_project_format` | `project_export` | FCPXML interchange descriptor or artifact only; no DaVinci Resolve, Final Cut Pro, shell, or local app automation. |
 
 The MOSS-TTS-Nano preflight expects a local ONNX bundle root containing

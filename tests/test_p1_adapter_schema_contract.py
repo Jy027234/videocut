@@ -236,6 +236,29 @@ def _valid_remotion_payload() -> dict[str, Any]:
         },
         "composition_id": "Main",
         "props": {"brand_color": "#31A8FF"},
+        "dispatcher_preflight_attestation": {
+            "schema": "video_editing_toolkit.remotion_dispatcher_preflight_attestation.v0",
+            "runtime": {
+                "nodejs": "ready",
+                "chromium": "ready",
+                "remotion": "ready",
+            },
+            "sandbox": {
+                "execution": "dispatcher_managed",
+                "filesystem": "artifact_ref_only",
+            },
+            "network": {
+                "egress": "deny_by_default",
+            },
+            "license": {
+                "confirmed": True,
+                "license_id": "remotion_team_license",
+            },
+            "execution": {
+                "mode": "dispatcher_only",
+                "execution_enabled": False,
+            },
+        },
     }
 
 

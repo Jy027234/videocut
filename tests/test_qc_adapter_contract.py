@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from conftest import assert_no_public_path_or_command_leak
+from conftest import MANIFESTS_DIR, assert_no_public_path_or_command_leak, load_json
 from video_editing_toolkit.adapters import (
     AdapterContext,
     AdapterRequest,
@@ -425,6 +425,31 @@ def test_qc_media_inspection_plan_is_plan_only_and_caller_safe(tmp_path: Path) -
     assert "storage_uri" not in rendered
     assert "source.mp4" not in rendered
     assert str(tmp_path) not in rendered
+    assert_no_public_path_or_command_leak(result.output)
+
+
+def test_qc_media_inspection_plan_matches_manifest_no_download_policy() -> None:
+    manifest = load_json(MANIFESTS_DIR / "video-editing-toolkit.p1.manifest.json")
+    entry = next(
+        capability
+        for capability in manifest["capabilities"]
+        if capability["capability"] == PLAN_MEDIA_INSPECTION
+    )
+
+    assert entry["status"] == "disabled"
+    assert entry["sandbox_policy"]["p1_5_runtime_mode"] == "plan_only"
+    assert entry["sandbox_policy"]["download_media"] is False
+    assert entry["sandbox_policy"]["run_ffmpeg"] is False
+    assert entry["sandbox_policy"]["run_opencv"] is False
+
+    result = _run_qc(_passing_payload(), capability=PLAN_MEDIA_INSPECTION)
+    plan = result.output["media_inspection_plan"]
+    assert result.artifact_refs == ()
+    assert plan["execution_policy"]["media_fetch_enabled"] is False
+    assert plan["execution_policy"]["materialize_artifacts"] is False
+    assert plan["execution_policy"]["binary_probe_enabled"] is False
+    assert plan["execution_policy"]["frame_sampling_enabled"] is False
+    assert all(value == 0 for value in plan["runtime_invocation_counts"].values())
     assert_no_public_path_or_command_leak(result.output)
 
 

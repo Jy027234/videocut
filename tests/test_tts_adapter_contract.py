@@ -89,6 +89,41 @@ def test_tts_without_model_path_returns_stable_unavailable(
     assert_no_public_path_or_command_leak(result.output)
 
 
+def test_tts_configured_model_path_still_does_not_run_onnx(monkeypatch) -> None:
+    _clear_model_env(monkeypatch)
+    raw_model_path = r"D:\private\models\moss-tts-nano.onnx"
+
+    def fail_if_onnxruntime_is_imported(name: str):
+        if name == "onnxruntime":
+            raise AssertionError("configured model path must not trigger ONNX runtime import")
+        return __import__(name)
+
+    monkeypatch.setattr(tts_adapter.importlib, "import_module", fail_if_onnxruntime_is_imported)
+    adapter = TTSAdapter()
+
+    result = adapter.handle(
+        _request(
+            {
+                "text": "Narrate the five second highlight cut.",
+                "model_path": raw_model_path,
+                "voice_preset": "warm_host",
+            }
+        )
+    )
+    rendered = json.dumps(result.output, sort_keys=True)
+
+    assert result.status == AdapterStatus.FAILED
+    assert result.error_code == ErrorCode.ADAPTER_UNAVAILABLE
+    assert result.output["reason_code"] == "tts.onnx_runtime_not_enabled"
+    assert result.output["model_runtime"]["model_configured"] is True
+    assert result.output["model_runtime"]["execution_enabled"] is False
+    assert result.output["model_runtime"]["downloads_disabled_by_default"] is True
+    assert result.output.get("audio_artifact_ref") is None
+    assert result.artifact_refs == ()
+    assert raw_model_path not in rendered
+    assert_no_public_path_or_command_leak(result.output)
+
+
 def test_tts_voice_clone_is_deferred_even_with_consent(
     monkeypatch,
 ) -> None:

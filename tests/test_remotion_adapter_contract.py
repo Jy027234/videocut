@@ -140,6 +140,65 @@ def test_remotion_dispatcher_readiness_reports_ready_when_preflight_is_confirmed
     assert_no_public_path_or_command_leak(result.output)
 
 
+def test_remotion_dispatcher_readiness_reports_ready_from_preflight_attestation() -> None:
+    result = RemotionAdapter().handle(
+        _request(
+            CREATE_REMOTION_RENDER_JOB,
+            input_payload=_valid_input_payload(
+                {
+                    "dispatcher_preflight_attestation": _ready_dispatcher_attestation(),
+                }
+            ),
+        )
+    )
+
+    assert result.status == AdapterStatus.SUCCEEDED
+    readiness = result.output["dispatcher_readiness"]
+    assert readiness == result.output["render_job"]["dispatcher_readiness"]
+    assert readiness["status"] == "ready"
+    assert readiness["preflight_source"] == "dispatcher_attestation"
+    assert {check["name"]: check["status"] for check in readiness["checks"]} == {
+        "nodejs": "ready",
+        "chromium": "ready",
+        "remotion": "ready",
+        "license": "ready",
+        "sandbox": "ready",
+        "network": "ready",
+        "execution": "ready",
+    }
+    assert result.usage_metrics["node_invocations"] == 0
+    assert result.usage_metrics["chromium_invocations"] == 0
+    assert_no_public_path_or_command_leak(result.output)
+
+
+def test_remotion_dispatcher_attestation_blocks_unavailable_runtime_or_license() -> None:
+    attestation = _ready_dispatcher_attestation()
+    attestation["runtime"]["remotion"] = "unavailable"
+    attestation["license"]["confirmed"] = False
+
+    result = RemotionAdapter().handle(
+        _request(
+            CREATE_REMOTION_RENDER_JOB,
+            input_payload=_valid_input_payload(
+                {
+                    "dispatcher_preflight_attestation": attestation,
+                }
+            ),
+        )
+    )
+
+    assert result.status == AdapterStatus.SUCCEEDED
+    readiness = result.output["dispatcher_readiness"]
+    checks = {check["name"]: check for check in readiness["checks"]}
+    assert readiness["status"] == "blocked"
+    assert readiness["preflight_source"] == "dispatcher_attestation"
+    assert checks["remotion"]["status"] == "blocked"
+    assert checks["remotion"]["code"] == "attested_runtime_unavailable"
+    assert checks["license"]["status"] == "blocked"
+    assert checks["license"]["code"] == "attested_license_confirmation_required"
+    assert_no_public_path_or_command_leak(result.output)
+
+
 def test_remotion_dispatcher_readiness_blocks_without_license_confirmation() -> None:
     result = RemotionAdapter().handle(
         _request(
@@ -218,6 +277,12 @@ def test_remotion_dispatcher_readiness_rejects_paths_and_commands_in_preflight_i
                     "execution": "dispatcher_managed",
                     "filesystem": "C:\\Users\\runner\\template",
                 },
+            },
+        },
+        {
+            "dispatcher_preflight_attestation": _ready_dispatcher_attestation()
+            | {
+                "endpoint": "https://dispatcher.internal/render?token=secret-token",
             },
         },
     ]
@@ -321,6 +386,32 @@ def _valid_input_payload(extra: dict[str, Any] | None = None) -> dict[str, Any]:
     if extra:
         payload.update(extra)
     return payload
+
+
+def _ready_dispatcher_attestation() -> dict[str, Any]:
+    return {
+        "schema": "video_editing_toolkit.remotion_dispatcher_preflight_attestation.v0",
+        "runtime": {
+            "nodejs": "ready",
+            "chromium": "ready",
+            "remotion": "ready",
+        },
+        "sandbox": {
+            "execution": "dispatcher_managed",
+            "filesystem": "artifact_ref_only",
+        },
+        "network": {
+            "egress": "deny_by_default",
+        },
+        "license": {
+            "confirmed": True,
+            "license_id": "remotion_team_license",
+        },
+        "execution": {
+            "mode": "dispatcher_only",
+            "execution_enabled": False,
+        },
+    }
 
 
 def _request(capability: str, *, input_payload: dict[str, Any]) -> AdapterRequest:

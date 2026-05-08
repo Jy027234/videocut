@@ -1640,6 +1640,9 @@
             }
           ]
         },
+        "dispatcher_preflight_attestation": {
+          "$ref": "#/$defs/remotion_dispatcher_preflight_attestation"
+        },
         "options": {
           "type": "object",
           "additionalProperties": true
@@ -1841,6 +1844,9 @@
               "additionalProperties": true
             }
           ]
+        },
+        "dispatcher_preflight_attestation": {
+          "$ref": "#/$defs/remotion_dispatcher_preflight_attestation"
         },
         "options": {
           "type": "object",
@@ -2150,6 +2156,133 @@
         }
       }
     },
+    "remotion_dispatcher_preflight_attestation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema",
+        "runtime",
+        "sandbox",
+        "network",
+        "license",
+        "execution"
+      ],
+      "properties": {
+        "schema": {
+          "const": "video_editing_toolkit.remotion_dispatcher_preflight_attestation.v0"
+        },
+        "runtime": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "nodejs",
+            "chromium",
+            "remotion"
+          ],
+          "properties": {
+            "nodejs": {
+              "$ref": "#/$defs/remotion_attestation_state"
+            },
+            "chromium": {
+              "$ref": "#/$defs/remotion_attestation_state"
+            },
+            "remotion": {
+              "$ref": "#/$defs/remotion_attestation_state"
+            }
+          }
+        },
+        "sandbox": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "execution",
+            "filesystem"
+          ],
+          "properties": {
+            "execution": {
+              "type": "string",
+              "enum": [
+                "dispatcher_managed",
+                "caller_managed",
+                "unknown"
+              ]
+            },
+            "filesystem": {
+              "type": "string",
+              "enum": [
+                "artifact_ref_only",
+                "local_filesystem",
+                "unknown"
+              ]
+            }
+          }
+        },
+        "network": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "egress"
+          ],
+          "properties": {
+            "egress": {
+              "type": "string",
+              "enum": [
+                "deny_by_default",
+                "allowlist",
+                "allow_all",
+                "unknown"
+              ]
+            }
+          }
+        },
+        "license": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "confirmed"
+          ],
+          "properties": {
+            "confirmed": {
+              "type": "boolean"
+            },
+            "license_id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            }
+          }
+        },
+        "execution": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "mode",
+            "execution_enabled"
+          ],
+          "properties": {
+            "mode": {
+              "type": "string",
+              "enum": [
+                "dispatcher_only",
+                "not_enabled",
+                "unknown"
+              ]
+            },
+            "execution_enabled": {
+              "const": false
+            }
+          }
+        }
+      }
+    },
+    "remotion_attestation_state": {
+      "type": "string",
+      "enum": [
+        "ready",
+        "unavailable",
+        "unknown"
+      ]
+    },
     "dispatcher_readiness": {
       "type": "object",
       "additionalProperties": false,
@@ -2174,6 +2307,7 @@
         "preflight_source": {
           "type": "string",
           "enum": [
+            "dispatcher_attestation",
             "caller_provided",
             "not_provided"
           ]

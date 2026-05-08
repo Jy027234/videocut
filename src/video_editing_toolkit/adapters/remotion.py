@@ -300,6 +300,13 @@ def build_remotion_render_job(
 
 
 def build_dispatcher_readiness(input_payload: Mapping[str, Any]) -> dict[str, Any]:
+    attestation = _optional_mapping(
+        input_payload.get("dispatcher_preflight_attestation"),
+        "$.dispatcher_preflight_attestation",
+    )
+    if attestation is not None:
+        return _dispatcher_readiness_from_attestation(attestation)
+
     capabilities = _optional_mapping(input_payload.get("dispatcher_capabilities"), "$.dispatcher_capabilities")
     policy = _optional_mapping(input_payload.get("dispatcher_policy"), "$.dispatcher_policy")
     has_preflight_input = (
@@ -325,6 +332,89 @@ def build_dispatcher_readiness(input_payload: Mapping[str, Any]) -> dict[str, An
         "preflight_source": "caller_provided" if has_preflight_input else "not_provided",
         "checks": checks,
     }
+
+
+def _dispatcher_readiness_from_attestation(attestation: Mapping[str, Any]) -> dict[str, Any]:
+    runtime = _optional_mapping(
+        attestation.get("runtime"),
+        "$.dispatcher_preflight_attestation.runtime",
+    ) or {}
+    sandbox = _optional_mapping(
+        attestation.get("sandbox"),
+        "$.dispatcher_preflight_attestation.sandbox",
+    ) or {}
+    network = _optional_mapping(
+        attestation.get("network"),
+        "$.dispatcher_preflight_attestation.network",
+    ) or {}
+    license_info = _optional_mapping(
+        attestation.get("license"),
+        "$.dispatcher_preflight_attestation.license",
+    ) or {}
+    execution = _optional_mapping(
+        attestation.get("execution"),
+        "$.dispatcher_preflight_attestation.execution",
+    ) or {}
+
+    checks = [
+        _attestation_runtime_check("nodejs", runtime.get("nodejs")),
+        _attestation_runtime_check("chromium", runtime.get("chromium")),
+        _attestation_runtime_check("remotion", runtime.get("remotion")),
+        _attestation_license_check(license_info),
+        _attestation_sandbox_check(sandbox),
+        _attestation_network_check(network),
+        _attestation_execution_check(execution),
+    ]
+    blocked = any(check["status"] == "blocked" for check in checks)
+    ready = all(check["status"] == "ready" for check in checks)
+    status = "blocked" if blocked else "ready" if ready else "unknown"
+    return {
+        "status": status,
+        "runtime_execution": "not_started",
+        "preflight_source": "dispatcher_attestation",
+        "checks": checks,
+    }
+
+
+def _attestation_runtime_check(name: str, value: Any) -> dict[str, str]:
+    normalized = str(value or "unknown").lower()
+    if normalized == "ready":
+        return _readiness_check(name, "ready", "attested_runtime_ready")
+    if normalized == "unavailable":
+        return _readiness_check(name, "blocked", "attested_runtime_unavailable")
+    return _readiness_check(name, "unknown", "attested_runtime_unknown")
+
+
+def _attestation_license_check(value: Mapping[str, Any]) -> dict[str, str]:
+    if value.get("confirmed") is True:
+        return _readiness_check("license", "ready", "attested_license_confirmed")
+    return _readiness_check("license", "blocked", "attested_license_confirmation_required")
+
+
+def _attestation_sandbox_check(value: Mapping[str, Any]) -> dict[str, str]:
+    execution = str(value.get("execution") or "").lower()
+    filesystem = str(value.get("filesystem") or "").lower()
+    if execution == "dispatcher_managed" and filesystem == "artifact_ref_only":
+        return _readiness_check("sandbox", "ready", "attested_dispatcher_managed_artifact_ref_only")
+    return _readiness_check("sandbox", "blocked", "attested_sandbox_policy_noncompliant")
+
+
+def _attestation_network_check(value: Mapping[str, Any]) -> dict[str, str]:
+    egress = str(value.get("egress") or "unknown").lower()
+    if egress == "deny_by_default":
+        return _readiness_check("network", "ready", "attested_egress_deny_by_default")
+    if egress == "allowlist":
+        return _readiness_check("network", "warning", "attested_egress_restricted")
+    if egress == "allow_all":
+        return _readiness_check("network", "blocked", "attested_egress_policy_noncompliant")
+    return _readiness_check("network", "unknown", "attested_network_policy_unknown")
+
+
+def _attestation_execution_check(value: Mapping[str, Any]) -> dict[str, str]:
+    mode = str(value.get("mode") or "").lower()
+    if mode == "dispatcher_only" and value.get("execution_enabled") is False:
+        return _readiness_check("execution", "ready", "attested_dispatcher_only_no_local_execution")
+    return _readiness_check("execution", "blocked", "attested_execution_policy_noncompliant")
 
 
 def _runtime_check(name: str, capabilities: Mapping[str, Any] | None, key: str) -> dict[str, str]:

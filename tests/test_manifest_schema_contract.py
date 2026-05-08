@@ -151,7 +151,7 @@ def test_p0_and_p1_manifests_validate_against_toolkit_manifest_schema() -> None:
     validator.validate(p0_manifest)
     validator.validate(p1_manifest)
     assert p0_manifest["version"].endswith("-p0")
-    assert p1_manifest["version"].endswith("-p1.5")
+    assert p1_manifest["version"].endswith("-p1.6")
 
 
 def test_p1_manifest_extends_p0_without_default_enabling_p1_or_sensitive_capabilities() -> None:
@@ -188,6 +188,12 @@ def test_p1_manifest_extends_p0_without_default_enabling_p1_or_sensitive_capabil
     assert p1_entries["video.qc.plan_media_inspection"]["sandbox_policy"]["run_opencv"] is False
     assert p1_entries["video.template.validate_remotion_template"]["sandbox_policy"]["run_chromium"] is False
     assert p1_entries["video.template.create_remotion_render_job"]["sandbox_policy"]["run_chromium"] is False
+    assert (
+        p1_entries["video.template.create_remotion_render_job"]["sandbox_policy"][
+            "dispatcher_attestation_required_before_real_render"
+        ]
+        is True
+    )
     assert p1_entries["video.render.export_project_format"]["sandbox_policy"]["supported_formats"] == [
         "fcpxml"
     ]
@@ -198,6 +204,25 @@ def test_p1_manifest_extends_p0_without_default_enabling_p1_or_sensitive_capabil
     assert {entry["capability"] for entry in deferred} == DEFERRED_HIGH_SENSITIVITY_CAPABILITIES
     assert {entry["status"] for entry in deferred} == {"deferred"}
     assert all("approval" in entry["requires"] and "consent" in entry["requires"] for entry in deferred)
+
+
+def test_p1_routes_exactly_match_disabled_p1_manifest_capabilities() -> None:
+    p1_manifest = load_json(P1_MANIFEST_PATH)
+    p1_disabled_capabilities = {
+        capability["capability"]
+        for capability in p1_manifest["capabilities"]
+        if capability.get("status") == "disabled"
+        and "toolkit.video_editing.p1" in capability.get("required_scopes", [])
+    }
+    enabled_capabilities = {
+        capability["capability"]
+        for capability in p1_manifest["capabilities"]
+        if capability.get("status") == "enabled"
+    }
+
+    assert set(P1_CAPABILITY_ROUTES) == p1_disabled_capabilities
+    assert not set(P1_CAPABILITY_ROUTES).intersection(CAPABILITY_ROUTES)
+    assert not set(P1_CAPABILITY_ROUTES).intersection(enabled_capabilities)
 
 
 def test_all_p1_scoped_capabilities_are_disabled_and_not_p0_routed() -> None:
