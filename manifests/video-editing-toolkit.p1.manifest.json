@@ -3,7 +3,7 @@
   "toolkit_id": "video-editing-toolkit",
   "display_name": "Video Editing Toolkit",
   "category": "video_editing",
-  "version": "0.2.0-p1.8",
+  "version": "0.2.0-p1.9",
   "status": "draft",
   "runtime_adapter": {
     "type": "local_worker",
@@ -77,6 +77,17 @@
       "artifact_lifecycle_cleanup": "local_store_caller_safe",
       "platform_core_repository_mutation": false,
       "network_execution_default": false
+    },
+    "p1_9_qc_media_inspection_evidence": {
+      "execution_policy": "controlled_worker_execution",
+      "explicit_policy_opt_in_required": true,
+      "artifact_ref_only": true,
+      "network_access": "disabled_by_default",
+      "network_execution_default": false,
+      "return_local_paths": false,
+      "allow_raw_command": false,
+      "platform_core_repository_mutation": false,
+      "enable_p1_disabled_capabilities": false
     }
   },
   "artifact_policy": {
@@ -1415,6 +1426,54 @@
         "download_media": false,
         "run_ffmpeg": false,
         "run_opencv": false
+      }
+    },
+    {
+      "capability": "video.qc.generate_media_inspection_evidence",
+      "version": "0.2.0-p1.9",
+      "status": "disabled",
+      "input_schema": {
+        "$ref": "../schemas/capability-io.schema.json#/$defs/qc_media_inspection_evidence_input"
+      },
+      "output_schema": {
+        "$ref": "../schemas/capability-io.schema.json#/$defs/qc_media_inspection_evidence_output"
+      },
+      "data_sensitivity": "medium",
+      "approval_policy": "none",
+      "artifact_policy": "artifact_ref_required",
+      "error_codes": [
+        "QC_MEDIA_INSPECTION_EVIDENCE_FAILED",
+        "ARTIFACT_ACCESS_DENIED",
+        "POLICY_VIOLATION"
+      ],
+      "required_permissions": [
+        "artifact:read",
+        "artifact:write",
+        "trace:write"
+      ],
+      "required_scopes": [
+        "toolkit.video_editing.p1"
+      ],
+      "quota_metrics": [
+        "input_bytes",
+        "output_bytes",
+        "media_duration_seconds",
+        "frame_count",
+        "qc_media_seconds",
+        "worker_cpu_seconds"
+      ],
+      "pricing_metrics": [
+        "qc_media_seconds"
+      ],
+      "sandbox_policy": {
+        "allow_raw_command": false,
+        "input_source": "artifact_ref_only",
+        "output_target": "artifact_ref_only",
+        "return_local_paths": false,
+        "network_access": "disabled_by_default",
+        "p1_9_runtime_mode": "controlled_worker_execution",
+        "execution_policy": "controlled_worker_execution",
+        "artifact_ref_only": true
       }
     },
     {

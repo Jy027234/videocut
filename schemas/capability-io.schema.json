@@ -498,6 +498,65 @@
         }
       }
     },
+    "caller_safe_artifact_ref": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "artifact_id",
+        "artifact_type"
+      ],
+      "properties": {
+        "artifact_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "artifact_type": {
+          "type": "string",
+          "minLength": 1
+        },
+        "mime_type": {
+          "type": "string"
+        },
+        "size_bytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "checksum": {
+          "oneOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "object",
+              "additionalProperties": true
+            }
+          ]
+        },
+        "data_class": {
+          "type": "string"
+        },
+        "retention_policy": {
+          "type": "string"
+        },
+        "expires_at": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "access_policy": {
+          "oneOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "object",
+              "additionalProperties": true
+            }
+          ]
+        }
+      }
+    },
     "run_context": {
       "type": "object",
       "additionalProperties": false,
@@ -1294,6 +1353,12 @@
     "qc_media_inspection_plan_input": {
       "$ref": "#/$defs/qc_report_input"
     },
+    "qc_media_inspection_evidence_input": {
+      "$ref": "#/$defs/qc_report_input",
+      "required": [
+        "artifact_ref"
+      ]
+    },
     "qc_media_inspection_plan_output": {
       "type": "object",
       "additionalProperties": false,
@@ -1559,6 +1624,229 @@
                 }
               }
             }
+          }
+        }
+      }
+    },
+    "qc_media_inspection_evidence_output": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "media_inspection_evidence",
+        "qc_media_inspection_evidence_artifact_ref",
+        "artifact_refs"
+      ],
+      "properties": {
+        "media_inspection_evidence": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "schema",
+            "summary",
+            "execution_policy",
+            "source_artifact_refs",
+            "inspection_results",
+            "evidence_items",
+            "warnings"
+          ],
+          "properties": {
+            "schema": {
+              "const": "video_editing_toolkit.qc_media_inspection_evidence.v0"
+            },
+            "summary": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "status",
+                "execution_enabled",
+                "source_artifact_count",
+                "inspection_result_count",
+                "evidence_item_count",
+                "warning_count"
+              ],
+              "properties": {
+                "status": {
+                  "type": "string",
+                  "enum": [
+                    "ready",
+                    "warning",
+                    "blocked"
+                  ]
+                },
+                "execution_enabled": {
+                  "const": true
+                },
+                "source_artifact_count": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "inspection_result_count": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "evidence_item_count": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "warning_count": {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              }
+            },
+            "execution_policy": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "runtime_mode",
+                "execution_enabled",
+                "artifact_ref_only",
+                "network_access",
+                "return_local_paths",
+                "allow_raw_command"
+              ],
+              "properties": {
+                "runtime_mode": {
+                  "const": "controlled_worker_execution"
+                },
+                "execution_enabled": {
+                  "const": true
+                },
+                "artifact_ref_only": {
+                  "const": true
+                },
+                "network_access": {
+                  "const": "disabled_by_default"
+                },
+                "return_local_paths": {
+                  "const": false
+                },
+                "allow_raw_command": {
+                  "const": false
+                }
+              }
+            },
+            "source_artifact_refs": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/caller_safe_artifact_ref"
+              }
+            },
+            "inspection_results": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "check_id",
+                  "status",
+                  "severity",
+                  "message",
+                  "evidence_refs"
+                ],
+                "properties": {
+                  "check_id": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "status": {
+                    "type": "string",
+                    "enum": [
+                      "passed",
+                      "warning",
+                      "failed",
+                      "skipped"
+                    ]
+                  },
+                  "severity": {
+                    "type": "string",
+                    "enum": [
+                      "pass",
+                      "warning",
+                      "blocking"
+                    ]
+                  },
+                  "message": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "evidence_refs": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "details": {
+                    "type": "object",
+                    "additionalProperties": true
+                  }
+                }
+              }
+            },
+            "evidence_items": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "evidence_id",
+                  "evidence_type",
+                  "artifact_ref"
+                ],
+                "properties": {
+                  "evidence_id": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "evidence_type": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "artifact_ref": {
+                    "$ref": "#/$defs/caller_safe_artifact_ref"
+                  },
+                  "summary": {
+                    "type": "object",
+                    "additionalProperties": true
+                  }
+                }
+              }
+            },
+            "warnings": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "warning_id",
+                  "message",
+                  "evidence_refs"
+                ],
+                "properties": {
+                  "warning_id": {
+                    "type": "string"
+                  },
+                  "message": {
+                    "type": "string"
+                  },
+                  "evidence_refs": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "qc_media_inspection_evidence_artifact_ref": {
+          "$ref": "#/$defs/caller_safe_artifact_ref"
+        },
+        "artifact_refs": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/caller_safe_artifact_ref"
           }
         }
       }

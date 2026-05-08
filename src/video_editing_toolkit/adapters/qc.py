@@ -4,25 +4,54 @@ from __future__ import annotations
 
 import json
 import re
+from dataclasses import replace
 from typing import Any, Mapping
 
-from video_editing_toolkit.resource_guard import CPU_LIGHT_LIMITS
+from video_editing_toolkit.resource_guard import CPU_LIGHT_LIMITS, ErrorCode
 from video_editing_toolkit.storage import ArtifactRef, LocalArtifactStore
 
 from .base import AdapterRequest, AdapterResult, AdapterStatus, BaseAdapter
+from .audio_quality import AudioQualityAdapter, CHECK_AUDIO_QUALITY
+from .ffmpeg import FFmpegAdapter, PROBE_MEDIA
+from .opencv import CHECK_VISUAL_QUALITY, OpenCVAdapter
 
 
 GENERATE_QC_REPORT = "video.qc.generate_report"
 BUILD_QC_EVIDENCE_PACKET = "video.qc.build_evidence_packet"
 PLAN_MEDIA_INSPECTION = "video.qc.plan_media_inspection"
+GENERATE_MEDIA_INSPECTION_EVIDENCE = "video.qc.generate_media_inspection_evidence"
 QC_REPORT_SCHEMA = "video_editing_toolkit.qc_report.v0"
 QC_REPORT_ARTIFACT_TYPE = "qc_report_json"
 QC_EVIDENCE_PACKET_SCHEMA = "video_editing_toolkit.qc_evidence_packet.v0"
 QC_EVIDENCE_PACKET_ARTIFACT_TYPE = "qc_evidence_packet_json"
 QC_MEDIA_INSPECTION_PLAN_SCHEMA = "video_editing_toolkit.qc_media_inspection_plan.v0"
+QC_MEDIA_INSPECTION_EVIDENCE_SCHEMA = "video_editing_toolkit.qc_media_inspection_evidence.v0"
+QC_MEDIA_INSPECTION_EVIDENCE_ARTIFACT_TYPE = "qc_media_inspection_evidence_json"
 _EPSILON = 0.000001
 _DEFAULT_DRIFT_WARNING_SECONDS = 0.5
 _SAFE_CODE_PATTERN = re.compile(r"[^A-Za-z0-9_.-]+")
+_MEDIA_INSPECTION_OPT_IN = "allow_p1_qc_media_inspection_execution"
+_FORBIDDEN_PUBLIC_KEYS = frozenset(
+    {
+        "storage_uri",
+        "local_path",
+        "file_path",
+        "filesystem_path",
+        "worker_path",
+        "internal_path",
+        "raw_command",
+        "raw_shell",
+        "ffmpeg_command",
+        "download_url",
+        "token",
+        "secret",
+        "password",
+        "api_key",
+        "private_key",
+        "client_secret",
+        "authorization",
+    }
+)
 _PUBLIC_ARTIFACT_REQUIRED_KEYS = frozenset(
     {
         "artifact_id",
@@ -43,7 +72,12 @@ _LOCAL_PATH_PATTERN = re.compile(
 class QCAdapter(BaseAdapter):
     adapter_name = "qc"
     supported_capabilities = frozenset(
-        {GENERATE_QC_REPORT, BUILD_QC_EVIDENCE_PACKET, PLAN_MEDIA_INSPECTION}
+        {
+            GENERATE_QC_REPORT,
+            BUILD_QC_EVIDENCE_PACKET,
+            PLAN_MEDIA_INSPECTION,
+            GENERATE_MEDIA_INSPECTION_EVIDENCE,
+        }
     )
     default_limits = CPU_LIGHT_LIMITS
 
@@ -54,6 +88,8 @@ class QCAdapter(BaseAdapter):
             return self.build_evidence_packet(request)
         if request.context.capability == PLAN_MEDIA_INSPECTION:
             return self.plan_media_inspection(request)
+        if request.context.capability == GENERATE_MEDIA_INSPECTION_EVIDENCE:
+            return self.generate_media_inspection_evidence(request)
         return AdapterResult.unsupported(request.context.capability, self.adapter_name)
 
     def generate_report(self, request: AdapterRequest) -> AdapterResult:
@@ -104,6 +140,90 @@ class QCAdapter(BaseAdapter):
             },
         )
 
+    def generate_media_inspection_evidence(self, request: AdapterRequest) -> AdapterResult:
+        if not self._media_inspection_execution_allowed(request):
+            return AdapterResult(
+                status=AdapterStatus.FAILED,
+                error_code=ErrorCode.ARTIFACT_ACCESS_DENIED,
+                error_message=(
+                    "generate_media_inspection_evidence requires explicit P1 QC media "
+                    "inspection execution policy opt-in."
+                ),
+            )
+
+        if not isinstance(request.input.get("_worker_media_path"), str) or not request.input.get(
+            "_worker_media_path"
+        ):
+            return AdapterResult(
+                status=AdapterStatus.FAILED,
+                error_code=ErrorCode.INVALID_REQUEST,
+                error_message=(
+                    "generate_media_inspection_evidence requires one resolved private worker "
+                    "media input."
+                ),
+            )
+
+        artifact_store = self._artifact_store(request)
+        if artifact_store is None:
+            return AdapterResult(
+                status=AdapterStatus.FAILED,
+                error_code=ErrorCode.INTERNAL_ERROR,
+                error_message="generate_media_inspection_evidence requires a configured artifact store.",
+            )
+
+        evidence = build_qc_media_inspection_evidence(
+            request,
+            (
+                _downstream_component(
+                    request,
+                    component_id="media_probe",
+                    capability=PROBE_MEDIA,
+                    adapter=FFmpegAdapter(),
+                    output_key="probe",
+                ),
+                _downstream_component(
+                    request,
+                    component_id="audio_quality",
+                    capability=CHECK_AUDIO_QUALITY,
+                    adapter=AudioQualityAdapter(),
+                ),
+                _downstream_component(
+                    request,
+                    component_id="visual_quality",
+                    capability=CHECK_VISUAL_QUALITY,
+                    adapter=OpenCVAdapter(),
+                ),
+            ),
+        )
+
+        evidence_ref = artifact_store.put_bytes(
+            content=_json_bytes(evidence),
+            artifact_type=QC_MEDIA_INSPECTION_EVIDENCE_ARTIFACT_TYPE,
+            owner_tenant_id=request.context.tenant_id,
+            created_by_run_id=request.context.run_id,
+            filename="qc_media_inspection_evidence.json",
+            mime_type="application/json",
+        )
+        public_ref = _artifact_public_dict_without_download_token(evidence_ref)
+        public_ref.pop("download_url", None)
+        output = {
+            "media_inspection_evidence": evidence,
+            "qc_media_inspection_evidence_artifact_ref": public_ref,
+            "artifact_refs": [public_ref],
+        }
+        return AdapterResult(
+            status=AdapterStatus.SUCCEEDED,
+            output=output,
+            artifact_refs=(evidence_ref,),
+            usage_metrics={
+                "operation": "generate_media_inspection_evidence",
+                "inspection_result_count": evidence["summary"]["inspection_result_count"],
+                "evidence_item_count": evidence["summary"]["evidence_item_count"],
+                "warning_count": evidence["summary"]["warning_count"],
+                "artifact_count": 1,
+            },
+        )
+
     def build_evidence_packet(self, request: AdapterRequest) -> AdapterResult:
         packet = build_qc_evidence_packet(request.input)
         output: dict[str, Any] = {"qc_evidence_packet": packet}
@@ -142,6 +262,9 @@ class QCAdapter(BaseAdapter):
         if isinstance(artifact_store, LocalArtifactStore):
             return artifact_store
         return None
+
+    def _media_inspection_execution_allowed(self, request: AdapterRequest) -> bool:
+        return request.context.policy_context.get(_MEDIA_INSPECTION_OPT_IN) is True
 
 
 def build_qc_report(input_payload: Mapping[str, Any]) -> dict[str, Any]:
@@ -395,12 +518,233 @@ def build_qc_media_inspection_plan(input_payload: Mapping[str, Any]) -> dict[str
     }
 
 
+def build_qc_media_inspection_evidence(
+    request: AdapterRequest,
+    components: tuple[dict[str, Any], ...],
+) -> dict[str, Any]:
+    succeeded = [component for component in components if component["status"] == "succeeded"]
+    failed = [component for component in components if component["status"] != "succeeded"]
+    source_artifact_refs = _source_artifact_refs(request.input)
+    warnings = [
+        {
+            "warning_id": f"{component['component_id']}_unavailable",
+            "message": f"{component['component_id']} evidence is unavailable; evidence packet is partial.",
+            "evidence_refs": [],
+        }
+        for component in failed
+    ]
+    inspection_results = [
+        _inspection_result_from_component(component)
+        for component in components
+    ]
+    evidence_items = [
+        _evidence_item_from_component(component, source_artifact_refs[0])
+        for component in succeeded
+        if source_artifact_refs
+    ]
+    status = "ready" if not failed else "warning" if succeeded else "blocked"
+    return {
+        "schema": QC_MEDIA_INSPECTION_EVIDENCE_SCHEMA,
+        "summary": {
+            "status": status,
+            "execution_enabled": True,
+            "source_artifact_count": len(source_artifact_refs),
+            "inspection_result_count": len(inspection_results),
+            "evidence_item_count": len(evidence_items),
+            "warning_count": len(warnings),
+        },
+        "execution_policy": {
+            "runtime_mode": "controlled_worker_execution",
+            "execution_enabled": True,
+            "artifact_ref_only": True,
+            "network_access": "disabled_by_default",
+            "return_local_paths": False,
+            "allow_raw_command": False,
+        },
+        "source_artifact_refs": source_artifact_refs,
+        "inspection_results": inspection_results,
+        "evidence_items": evidence_items,
+        "warnings": warnings,
+    }
+
+
+def _inspection_result_from_component(component: Mapping[str, Any]) -> dict[str, Any]:
+    component_id = str(component.get("component_id") or "unknown")
+    evidence_refs = _string_list(component.get("evidence_refs"))
+    if component.get("status") == "succeeded":
+        return {
+            "check_id": component_id,
+            "status": "passed",
+            "severity": "pass",
+            "message": f"{component_id} evidence collected.",
+            "evidence_refs": evidence_refs,
+            "details": _compact_dict(
+                {"summary": _evidence_summary(component.get("evidence"))}
+            ),
+        }
+    return {
+        "check_id": component_id,
+        "status": "skipped",
+        "severity": "warning",
+        "message": f"{component_id} evidence is unavailable.",
+        "evidence_refs": [],
+        "details": _compact_dict(
+            {"error_code": _nested_value(component, ("error", "code"))}
+        ),
+    }
+
+
+def _evidence_item_from_component(
+    component: Mapping[str, Any],
+    source_artifact_ref: Mapping[str, Any],
+) -> dict[str, Any]:
+    component_id = str(component.get("component_id") or "unknown")
+    return {
+        "evidence_id": component_id,
+        "evidence_type": f"{component_id}_summary",
+        "artifact_ref": dict(source_artifact_ref),
+        "summary": _evidence_summary(component.get("evidence")),
+    }
+
+
+def _evidence_summary(value: Any) -> dict[str, Any]:
+    safe_value = _caller_safe_value(value)
+    if not isinstance(safe_value, Mapping):
+        return {}
+    summary: dict[str, Any] = {}
+    for key in (
+        "duration_seconds",
+        "media_kind",
+        "analysis_level",
+        "sampled_frame_count",
+        "audio_stream_count",
+    ):
+        if key in safe_value:
+            summary[key] = safe_value[key]
+    streams = safe_value.get("streams")
+    if isinstance(streams, list):
+        summary["stream_count"] = len(streams)
+        summary["has_video_stream"] = any(
+            isinstance(stream, Mapping) and stream.get("codec_type") == "video"
+            for stream in streams
+        )
+        summary["has_audio_stream"] = any(
+            isinstance(stream, Mapping) and stream.get("codec_type") == "audio"
+            for stream in streams
+        )
+    quality_summary = safe_value.get("quality_summary")
+    if isinstance(quality_summary, Mapping):
+        summary["quality_summary"] = dict(quality_summary)
+    return _compact_dict(summary)
+
+
+def _downstream_component(
+    request: AdapterRequest,
+    *,
+    component_id: str,
+    capability: str,
+    adapter: BaseAdapter,
+    output_key: str | None = None,
+) -> dict[str, Any]:
+    downstream_request = AdapterRequest(
+        context=replace(request.context, capability=capability),
+        input=_downstream_media_input(request.input),
+        resource_limits=request.resource_limits,
+    )
+    try:
+        result = adapter.handle(downstream_request)
+    except Exception:
+        return _failed_evidence_component(component_id, "internal.error")
+
+    if result.status != AdapterStatus.SUCCEEDED:
+        error_code = result.error_code.value if result.error_code is not None else "adapter.failed"
+        return _failed_evidence_component(component_id, error_code)
+
+    safe_output = _caller_safe_value(result.output)
+    if output_key is not None and isinstance(safe_output, Mapping):
+        safe_output = safe_output.get(output_key, safe_output)
+
+    return {
+        "component_id": component_id,
+        "status": "succeeded",
+        "capability": capability,
+        "evidence": safe_output,
+        "evidence_refs": _component_evidence_refs(component_id, safe_output),
+    }
+
+
+def _failed_evidence_component(component_id: str, error_code: str) -> dict[str, Any]:
+    return {
+        "component_id": component_id,
+        "status": "unavailable",
+        "error": {
+            "code": _safe_code(error_code),
+            "message": f"{component_id} evidence is unavailable.",
+        },
+        "evidence_refs": [],
+    }
+
+
+def _downstream_media_input(input_payload: Mapping[str, Any]) -> dict[str, Any]:
+    media_input = {"_worker_media_path": input_payload["_worker_media_path"]}
+    for key in ("frame_limit", "max_frames", "sample_frame_limit"):
+        if key in input_payload:
+            media_input[key] = input_payload[key]
+    return media_input
+
+
+def _component_evidence_refs(component_id: str, value: Any) -> list[str]:
+    refs: list[str] = []
+    if isinstance(value, Mapping):
+        for key in value:
+            refs.append(f"{component_id}.{key}")
+    elif value is not None:
+        refs.append(component_id)
+    return _unique_ref(refs)
+
+
 def _artifact_public_dict_without_download_token(ref: ArtifactRef) -> dict[str, Any]:
     public_ref = ref.to_public_dict()
     download_url = public_ref.get("download_url")
     if isinstance(download_url, str) and ("?" in download_url or "token" in download_url.casefold()):
         public_ref.pop("download_url", None)
     return public_ref
+
+
+def _caller_safe_value(value: Any) -> Any:
+    if isinstance(value, Mapping):
+        safe: dict[str, Any] = {}
+        for key, child in value.items():
+            key_text = str(key)
+            if key_text.casefold() in _FORBIDDEN_PUBLIC_KEYS:
+                continue
+            safe_child = _caller_safe_value(child)
+            if safe_child is not None:
+                safe[key_text] = safe_child
+        return safe
+    if isinstance(value, list):
+        return [
+            safe_child
+            for child in value
+            if (safe_child := _caller_safe_value(child)) is not None
+        ]
+    if isinstance(value, tuple):
+        return [
+            safe_child
+            for child in value
+            if (safe_child := _caller_safe_value(child)) is not None
+        ]
+    if isinstance(value, str):
+        text = value.strip()
+        lowered = text.casefold()
+        if _LOCAL_PATH_PATTERN.search(text):
+            return None
+        if "storage_uri" in lowered or "download_url" in lowered:
+            return None
+        if "token" in lowered or "secret" in lowered:
+            return None
+        return text
+    return value
 
 
 def _required_evidence(

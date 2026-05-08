@@ -69,6 +69,7 @@ P1_DRAFT_CAPABILITIES = {
     "video.qc.generate_report",
     "video.qc.build_evidence_packet",
     "video.qc.plan_media_inspection",
+    "video.qc.generate_media_inspection_evidence",
     "video.template.validate_remotion_template",
     "video.template.create_remotion_render_job",
     "video.render.export_project_format",
@@ -151,7 +152,7 @@ def test_p0_and_p1_manifests_validate_against_toolkit_manifest_schema() -> None:
     validator.validate(p0_manifest)
     validator.validate(p1_manifest)
     assert p0_manifest["version"].endswith("-p0")
-    assert p1_manifest["version"].endswith("-p1.8")
+    assert p1_manifest["version"].endswith("-p1.9")
 
 
 def test_p1_manifest_extends_p0_without_default_enabling_p1_or_sensitive_capabilities() -> None:
@@ -198,6 +199,17 @@ def test_p1_manifest_extends_p0_without_default_enabling_p1_or_sensitive_capabil
         "platform_core_repository_mutation": False,
         "network_execution_default": False,
     }
+    assert p1_manifest["sandbox_policy"]["p1_9_qc_media_inspection_evidence"] == {
+        "execution_policy": "controlled_worker_execution",
+        "explicit_policy_opt_in_required": True,
+        "artifact_ref_only": True,
+        "network_access": "disabled_by_default",
+        "network_execution_default": False,
+        "return_local_paths": False,
+        "allow_raw_command": False,
+        "platform_core_repository_mutation": False,
+        "enable_p1_disabled_capabilities": False,
+    }
     assert (
         p1_entries["video.qc.build_evidence_packet"]["sandbox_policy"]["p1_3_runtime_mode"]
         == "contract_only_until_adapter_enabled"
@@ -206,6 +218,12 @@ def test_p1_manifest_extends_p0_without_default_enabling_p1_or_sensitive_capabil
     assert p1_entries["video.qc.plan_media_inspection"]["sandbox_policy"]["download_media"] is False
     assert p1_entries["video.qc.plan_media_inspection"]["sandbox_policy"]["run_ffmpeg"] is False
     assert p1_entries["video.qc.plan_media_inspection"]["sandbox_policy"]["run_opencv"] is False
+    qc_media_evidence_policy = p1_entries["video.qc.generate_media_inspection_evidence"]["sandbox_policy"]
+    assert qc_media_evidence_policy["p1_9_runtime_mode"] == "controlled_worker_execution"
+    assert qc_media_evidence_policy["execution_policy"] == "controlled_worker_execution"
+    assert qc_media_evidence_policy["artifact_ref_only"] is True
+    assert qc_media_evidence_policy["return_local_paths"] is False
+    assert qc_media_evidence_policy["allow_raw_command"] is False
     assert p1_entries["video.template.validate_remotion_template"]["sandbox_policy"]["run_chromium"] is False
     assert p1_entries["video.template.create_remotion_render_job"]["sandbox_policy"]["run_chromium"] is False
     assert (

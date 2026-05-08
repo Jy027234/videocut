@@ -15,7 +15,13 @@ from .ffmpeg import FFmpegAdapter
 from .opencv import OpenCVAdapter
 from .project_edit import ProjectEditAdapter
 from .project_export import EXPORT_PROJECT_FORMAT, ProjectExportAdapter
-from .qc import BUILD_QC_EVIDENCE_PACKET, GENERATE_QC_REPORT, PLAN_MEDIA_INSPECTION, QCAdapter
+from .qc import (
+    BUILD_QC_EVIDENCE_PACKET,
+    GENERATE_MEDIA_INSPECTION_EVIDENCE,
+    GENERATE_QC_REPORT,
+    PLAN_MEDIA_INSPECTION,
+    QCAdapter,
+)
 from .remotion import RemotionAdapter
 from .scenedetect import PySceneDetectAdapter
 from .tts import GENERATE_VOICEOVER, TTSAdapter
@@ -237,6 +243,13 @@ P1_CAPABILITY_ROUTES: Mapping[str, CapabilityRoute] = {
         adapter_name=QCAdapter.adapter_name,
         adapter_class=QCAdapter,
         queue_topic="video.qc.inspection_plan",
+        resource_limits=QCAdapter.default_limits,
+    ),
+    GENERATE_MEDIA_INSPECTION_EVIDENCE: CapabilityRoute(
+        capability=GENERATE_MEDIA_INSPECTION_EVIDENCE,
+        adapter_name=QCAdapter.adapter_name,
+        adapter_class=QCAdapter,
+        queue_topic="video.qc.media_inspection_evidence",
         resource_limits=QCAdapter.default_limits,
     ),
     EXPORT_PROJECT_FORMAT: CapabilityRoute(

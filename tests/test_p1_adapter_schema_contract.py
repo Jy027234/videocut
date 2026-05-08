@@ -10,10 +10,14 @@ import pytest
 
 from conftest import MANIFESTS_DIR, SCHEMAS_DIR, assert_no_public_path_or_command_leak, load_json
 import video_editing_toolkit.adapters.tts as tts_adapter
-from video_editing_toolkit.adapters import AdapterContext, AdapterRequest, AdapterStatus
+from video_editing_toolkit.adapters import AdapterContext, AdapterRequest, AdapterResult, AdapterStatus
+from video_editing_toolkit.adapters.audio_quality import AudioQualityAdapter
+from video_editing_toolkit.adapters.ffmpeg import FFmpegAdapter
+from video_editing_toolkit.adapters.opencv import OpenCVAdapter
 from video_editing_toolkit.adapters.project_export import EXPORT_PROJECT_FORMAT, ProjectExportAdapter
 from video_editing_toolkit.adapters.qc import (
     BUILD_QC_EVIDENCE_PACKET,
+    GENERATE_MEDIA_INSPECTION_EVIDENCE,
     GENERATE_QC_REPORT,
     PLAN_MEDIA_INSPECTION,
     QCAdapter,
@@ -24,6 +28,7 @@ from video_editing_toolkit.adapters.remotion import (
     RemotionAdapter,
 )
 from video_editing_toolkit.adapters.tts import GENERATE_VOICEOVER, TTSAdapter
+from video_editing_toolkit.storage import LocalArtifactStore
 
 
 jsonschema = pytest.importorskip("jsonschema")
@@ -122,6 +127,119 @@ def test_p1_tts_preflight_output_validates_against_manifest_schema_refs(
     assert_no_public_path_or_command_leak(result.output)
     assert str(bundle_root) not in str(result.output)
     _validate_output_against_p1_manifest_schema(GENERATE_VOICEOVER, result.output)
+
+
+def test_p1_qc_media_inspection_evidence_schema_accepts_caller_safe_artifacts() -> None:
+    artifact_ref = _caller_safe_artifact_ref("qc_media_inspection_evidence_schema")
+    output = {
+        "media_inspection_evidence": {
+            "schema": "video_editing_toolkit.qc_media_inspection_evidence.v0",
+            "summary": {
+                "status": "ready",
+                "execution_enabled": True,
+                "source_artifact_count": 1,
+                "inspection_result_count": 1,
+                "evidence_item_count": 1,
+                "warning_count": 0,
+            },
+            "execution_policy": {
+                "runtime_mode": "controlled_worker_execution",
+                "execution_enabled": True,
+                "artifact_ref_only": True,
+                "network_access": "disabled_by_default",
+                "return_local_paths": False,
+                "allow_raw_command": False,
+            },
+            "source_artifact_refs": [_caller_safe_artifact_ref("source_video_schema")],
+            "inspection_results": [
+                {
+                    "check_id": "media_integrity",
+                    "status": "passed",
+                    "severity": "pass",
+                    "message": "Caller-safe media inspection evidence is present.",
+                    "evidence_refs": [artifact_ref["artifact_id"]],
+                    "details": {"duration_seconds": 5.0},
+                }
+            ],
+            "evidence_items": [
+                {
+                    "evidence_id": "media_probe",
+                    "evidence_type": "probe_summary",
+                    "artifact_ref": artifact_ref,
+                    "summary": {"stream_count": 2},
+                }
+            ],
+            "warnings": [],
+        },
+        "qc_media_inspection_evidence_artifact_ref": artifact_ref,
+        "artifact_refs": [artifact_ref],
+    }
+
+    assert_no_public_path_or_command_leak(output)
+    _validate_output_against_p1_manifest_schema(GENERATE_MEDIA_INSPECTION_EVIDENCE, output)
+
+    unsafe_output = output | {
+        "qc_media_inspection_evidence_artifact_ref": artifact_ref | {
+            "storage_uri": "s3://internal-bucket/qc.json"
+        }
+    }
+    with pytest.raises(jsonschema.ValidationError):
+        _validate_output_against_p1_manifest_schema(GENERATE_MEDIA_INSPECTION_EVIDENCE, unsafe_output)
+
+
+def test_p1_qc_media_inspection_evidence_adapter_output_validates_against_manifest_schema_refs(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        FFmpegAdapter,
+        "invoke",
+        lambda self, request: AdapterResult(
+            status=AdapterStatus.SUCCEEDED,
+            output={"probe": {"duration_seconds": 1.0, "streams": [{"codec_type": "video"}]}},
+        ),
+    )
+    monkeypatch.setattr(
+        AudioQualityAdapter,
+        "invoke",
+        lambda self, request: AdapterResult(
+            status=AdapterStatus.SUCCEEDED,
+            output={"quality_summary": {"duration_seconds": 1.0, "has_audio_stream": True}},
+        ),
+    )
+    monkeypatch.setattr(
+        OpenCVAdapter,
+        "invoke",
+        lambda self, request: AdapterResult(
+            status=AdapterStatus.SUCCEEDED,
+            output={"quality_summary": {"mean_brightness": 100.0}},
+        ),
+    )
+
+    result = QCAdapter().handle(
+        AdapterRequest(
+            context=AdapterContext(
+                tenant_id="tenant_p1_schema",
+                project_id="project_p1_schema",
+                run_id="run_p1_schema",
+                tool_call_id="tool_p1_schema",
+                capability=GENERATE_MEDIA_INSPECTION_EVIDENCE,
+                policy_context={"allow_p1_qc_media_inspection_execution": True},
+            ),
+            input={
+                "_artifact_store": LocalArtifactStore(tmp_path / "artifacts"),
+                "_worker_media_path": str(tmp_path / "private" / "source.mp4"),
+                "artifact_ref": _caller_safe_artifact_ref("source_video_schema"),
+            },
+        )
+    )
+
+    assert result.status == AdapterStatus.SUCCEEDED
+    assert_no_public_path_or_command_leak(result.output)
+    _validate_output_against_p1_manifest_schema(
+        GENERATE_MEDIA_INSPECTION_EVIDENCE,
+        result.output,
+    )
 
 
 def _validate_output_against_p1_manifest_schema(
@@ -281,6 +399,19 @@ def _valid_project_export_payload() -> dict[str, Any]:
                 }
             }
         },
+    }
+
+
+def _caller_safe_artifact_ref(artifact_id: str) -> dict[str, Any]:
+    return {
+        "artifact_id": artifact_id,
+        "artifact_type": "qc_media_inspection_evidence",
+        "mime_type": "application/json",
+        "size_bytes": 256,
+        "checksum": "sha256:" + "b" * 64,
+        "data_class": "medium",
+        "retention_policy": "short_lived",
+        "access_policy": "tenant_and_explicit_grants",
     }
 
 
