@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import math
+import os
 import shutil
 import subprocess
 import wave
@@ -35,7 +36,7 @@ class AudioQualityAdapter(BaseAdapter):
         description = dict(super().describe())
         description["dependency_status"] = {
             "wave": "available",
-            "ffprobe": "available" if shutil.which("ffprobe") else "missing",
+            "ffprobe": "available" if _binary_path("ffprobe") else "missing",
         }
         return description
 
@@ -63,7 +64,7 @@ class AudioQualityAdapter(BaseAdapter):
         if wav_result is not None:
             return wav_result
 
-        if shutil.which("ffprobe") is None:
+        if _binary_path("ffprobe") is None:
             return AdapterResult(
                 status=AdapterStatus.FAILED,
                 error_code=ErrorCode.ADAPTER_UNAVAILABLE,
@@ -191,7 +192,7 @@ class AudioQualityAdapter(BaseAdapter):
     def _run_ffprobe_json(
         self, media_path: Path, timeout_seconds: int | float
     ) -> Mapping[str, Any]:
-        ffprobe = shutil.which("ffprobe")
+        ffprobe = _binary_path("ffprobe")
         if ffprobe is None:
             raise FileNotFoundError("ffprobe is unavailable")
         completed = subprocess.run(
@@ -280,3 +281,25 @@ class AudioQualityAdapter(BaseAdapter):
             return round(float(value), 6)
         except (TypeError, ValueError):
             return None
+
+
+def _binary_path(name: str) -> str | None:
+    found = shutil.which(name)
+    if found is not None:
+        return found
+    if not _static_ffmpeg_enabled():
+        return None
+    try:
+        import static_ffmpeg
+    except ImportError:
+        return None
+    try:
+        static_ffmpeg.add_paths()
+    except Exception:
+        return None
+    return shutil.which(name)
+
+
+def _static_ffmpeg_enabled() -> bool:
+    value = os.environ.get("VIDEO_TOOLKIT_USE_STATIC_FFMPEG", "")
+    return value.casefold() in {"1", "true", "yes", "on"}

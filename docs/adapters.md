@@ -253,6 +253,11 @@ calling `run_agentctl`, but public responses continue to return artifact refs
 only and must not include local paths, raw commands, storage URIs, or signed
 download URLs.
 
+For local Windows smoke tests where `ffmpeg`/`ffprobe` are not on `PATH`, install
+the analysis extras or `static-ffmpeg` and set `VIDEO_TOOLKIT_USE_STATIC_FFMPEG=1`.
+This opt-in only amends the private worker process `PATH`; adapter outputs still
+report dependency status and caller-safe evidence without returning binary paths.
+
 The MOSS-TTS-Nano preflight expects a local ONNX bundle root containing
 `MOSS-TTS-Nano-100M-ONNX` and `MOSS-Audio-Tokenizer-Nano-ONNX`, or explicit TTS
 and codec bundle paths. Public output reports only aggregate readiness and

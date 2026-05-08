@@ -37,6 +37,7 @@ analysis = [
   "numpy>=2",
   "opencv-python-headless>=4.9",
   "platformdirs",
+  "static-ffmpeg>=3.0; platform_system == 'Windows'",
   "tqdm",
 ]
 speech = [

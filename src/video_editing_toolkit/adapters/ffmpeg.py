@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import math
+import os
 import shutil
 import subprocess
 import tempfile
@@ -132,7 +133,7 @@ class FFmpegAdapter(BaseAdapter):
     def describe(self) -> Mapping[str, Any]:
         description = dict(super().describe())
         description["dependency_status"] = {
-            name: "available" if shutil.which(name) else "missing"
+            name: "available" if _binary_path(name) else "missing"
             for name in ("ffmpeg", "ffprobe")
         }
         description["operations"] = [
@@ -535,7 +536,7 @@ class FFmpegAdapter(BaseAdapter):
     def _run_ffprobe_json(
         self, media_path: Path, timeout_seconds: int | float
     ) -> Mapping[str, Any]:
-        ffprobe = shutil.which("ffprobe")
+        ffprobe = _binary_path("ffprobe")
         if ffprobe is None:
             raise FileNotFoundError("ffprobe is unavailable")
         completed = subprocess.run(
@@ -557,7 +558,7 @@ class FFmpegAdapter(BaseAdapter):
         return json.loads(completed.stdout)
 
     def _run_ffmpeg(self, arguments: list[str], timeout_seconds: int | float) -> None:
-        ffmpeg = shutil.which("ffmpeg")
+        ffmpeg = _binary_path("ffmpeg")
         if ffmpeg is None:
             raise FileNotFoundError("ffmpeg is unavailable")
         subprocess.run(
@@ -776,7 +777,7 @@ class FFmpegAdapter(BaseAdapter):
 
     def _missing_binaries(self, operation: FFmpegOperation) -> tuple[str, ...]:
         return tuple(
-            name for name in sorted(operation.binary_requirements) if shutil.which(name) is None
+            name for name in sorted(operation.binary_requirements) if _binary_path(name) is None
         )
 
     def _unavailable_result(self, missing: tuple[str, ...]) -> AdapterResult:
@@ -799,3 +800,25 @@ class FFmpegAdapter(BaseAdapter):
         if isinstance(value, list):
             return [self._sanitize_probe(child) for child in value]
         return value
+
+
+def _binary_path(name: str) -> str | None:
+    found = shutil.which(name)
+    if found is not None:
+        return found
+    if not _static_ffmpeg_enabled():
+        return None
+    try:
+        import static_ffmpeg
+    except ImportError:
+        return None
+    try:
+        static_ffmpeg.add_paths()
+    except Exception:
+        return None
+    return shutil.which(name)
+
+
+def _static_ffmpeg_enabled() -> bool:
+    value = os.environ.get("VIDEO_TOOLKIT_USE_STATIC_FFMPEG", "")
+    return value.casefold() in {"1", "true", "yes", "on"}
