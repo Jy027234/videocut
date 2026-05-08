@@ -15,6 +15,7 @@ dependencies = [
 [project.scripts]
 video-toolkit-demo = "video_editing_toolkit.demo:main"
 video-toolkit-agentctl = "video_editing_toolkit.agentctl:main"
+video-toolkit-agentctl-live-smoke = "video_editing_toolkit.agentctl_live_smoke:main"
 video-toolkit-agentctl-remote = "video_editing_toolkit.agentctl_remote:main"
 video-toolkit-agentctl-worker = "video_editing_toolkit.agentctl_worker:main"
 video-toolkit-local-api = "video_editing_toolkit.local_api:main"

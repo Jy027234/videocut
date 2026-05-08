@@ -365,6 +365,49 @@ def build_runspec_validation_payload(*, tenant_id: str = "demo_tenant") -> dict[
     }
 
 
+def build_runspec_enqueue_payload(
+    *,
+    tenant_id: str = "demo_tenant",
+    backend_id: str = "local",
+    capability: str = "video.project_edit.create_project",
+    input_payload: Mapping[str, Any] | None = None,
+    artifact_refs: Sequence[Mapping[str, Any]] | None = None,
+    trace_id: str = "trace_video_toolkit_queue_smoke",
+    draft_id: str = "runspecdraft_video_toolkit_queue_smoke",
+) -> dict[str, Any]:
+    """Build a RunSpec payload for queue smoke tests against existing artifact_refs."""
+
+    payload = build_runspec_validation_payload(tenant_id=tenant_id)
+    payload.update(
+        {
+            "draft_id": draft_id,
+            "title": "Video Editing Toolkit queue smoke",
+            "description": "Enqueue an external video toolkit worker run against existing Platform Core artifact_refs.",
+            "trace_id": trace_id,
+            "dispatch_mode": "enqueue",
+            "backend_id": backend_id,
+        }
+    )
+    payload["input_payload"] = {
+        "toolkit_id": TOOLKIT_ID,
+        "capability": capability,
+        "input": dict(input_payload or {"project_id": "proj_agentctl_queue_smoke"}),
+        "artifact_refs": [dict(item) for item in artifact_refs or ()],
+        "policy_context": {
+            "tenant_id": tenant_id,
+            "user_id": "agentctl_queue_smoke",
+            "data_policy": {"artifact_contract": "artifact_ref_only"},
+            "quota_policy": {"profile": "queue_smoke"},
+        },
+    }
+    payload["metadata"] = {
+        **dict(payload.get("metadata") or {}),
+        "capability_class": "queue_smoke_existing_artifact_refs",
+        "dispatch_recommendation": "enqueue_with_external_worker",
+    }
+    return payload
+
+
 def run_worker_smoke(
     client: AgentctlRemoteClient,
     *,

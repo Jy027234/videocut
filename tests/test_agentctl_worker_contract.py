@@ -514,6 +514,55 @@ def test_worker_materializes_artifact_ref_before_running_job(tmp_path: Path) -> 
     assert_no_public_path_or_command_leak(complete_body)
 
 
+def test_worker_artifact_download_token_can_differ_from_control_token(tmp_path: Path) -> None:
+    content = b"split token input bytes"
+    artifact_id = "artifact_worker_split_token"
+    job = _leased_job(
+        job_id="rtjob_worker_split_token",
+        capability="video.asset_ingest.build_asset_index",
+        input_payload={
+            "project_id": "proj_worker_split_token",
+            "artifact_ids": [artifact_id],
+        },
+        artifact_refs=[_artifact_ref(artifact_id=artifact_id, content=content)],
+    )
+    fake = FakeAgentctlWorkerClient(lease_job=job)
+    fetcher = FakeArtifactBytesFetcher(
+        {
+            "http://platform.local/artifacts/download/input.mp4": content,
+        }
+    )
+    worker = VideoToolkitAgentctlWorker(
+        VideoToolkitWorkerConfig(
+            base_url="http://agentctl.local",
+            token="control-token",
+            artifact_token="artifact-token",
+            worker_id="video-worker-test",
+            backend_id="local",
+            ttl_seconds=60,
+            lease_seconds=30,
+            timeout_seconds=5,
+            artifact_root=tmp_path / "worker-artifacts",
+            artifact_base_url="http://platform.local",
+            max_artifact_bytes=1024,
+            max_job_input_bytes=1024,
+        ),
+        client=fake,
+        artifact_fetcher=fetcher,
+    )
+
+    result = worker.run_once()
+    complete_body = fake.requests[-1]["body"]
+    rendered = json.dumps({"result": result, "complete": complete_body}, sort_keys=True)
+
+    assert result["ok"] is True
+    assert fetcher.requests[0]["headers"]["Authorization"] == "Bearer artifact-token"
+    assert "control-token" not in rendered
+    assert "artifact-token" not in rendered
+    assert_no_public_path_or_command_leak(result)
+    assert_no_public_path_or_command_leak(complete_body)
+
+
 def test_worker_reports_materialization_failure_without_leaking_download_url(tmp_path: Path) -> None:
     content = b"expected-bytes"
     artifact_id = "artifact_worker_bad_checksum"

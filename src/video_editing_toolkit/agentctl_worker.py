@@ -96,6 +96,7 @@ class VideoToolkitWorkerConfig:
     idle_sleep_seconds: float = 2.0
     artifact_root: Path = DEFAULT_ARTIFACT_ROOT
     artifact_base_url: str | None = None
+    artifact_token: str | None = None
     max_artifact_bytes: int = DEFAULT_MAX_ARTIFACT_BYTES
     allowed_resource_classes: tuple[str, ...] = DEFAULT_ALLOWED_RESOURCE_CLASSES
     allowed_capabilities: tuple[str, ...] = ()
@@ -119,6 +120,7 @@ class VideoToolkitWorkerConfig:
         idle_sleep_seconds: float | None = None,
         artifact_root: str | Path | None = None,
         artifact_base_url: str | None = None,
+        artifact_token: str | None = None,
         max_artifact_bytes: int | None = None,
         allowed_resource_classes: Sequence[str] | None = None,
         allowed_capabilities: Sequence[str] | None = None,
@@ -166,6 +168,9 @@ class VideoToolkitWorkerConfig:
             artifact_base_url=artifact_base_url
             or os.environ.get("VIDEO_TOOLKIT_ARTIFACT_BASE_URL")
             or selected_base_url,
+            artifact_token=artifact_token
+            if artifact_token is not None
+            else os.environ.get("VIDEO_TOOLKIT_ARTIFACT_TOKEN"),
             max_artifact_bytes=max_artifact_bytes
             if max_artifact_bytes is not None
             else _int_env("VIDEO_TOOLKIT_MAX_ARTIFACT_BYTES", DEFAULT_MAX_ARTIFACT_BYTES),
@@ -203,7 +208,7 @@ class VideoToolkitWorkerConfig:
     def materialization_config(self) -> ArtifactMaterializationConfig:
         return ArtifactMaterializationConfig(
             artifact_base_url=self.artifact_base_url,
-            token=self.token,
+            token=self.artifact_token if self.artifact_token is not None else self.token,
             timeout_seconds=self.timeout_seconds,
             max_artifact_bytes=self.max_artifact_bytes,
         )
@@ -249,6 +254,7 @@ class VideoToolkitAgentctlWorker:
                     "completion": None,
                 },
                 token=self.config.token,
+                extra_tokens=(self.config.artifact_token,),
             )
 
         job_id = _optional_string(job.get("job_id"))
@@ -270,6 +276,7 @@ class VideoToolkitAgentctlWorker:
                     "error_message": "Worker leased a job that was not created by the explicit enqueue probe.",
                 },
                 token=self.config.token,
+                extra_tokens=(self.config.artifact_token,),
             )
 
         result = self.execute_job(job, lease_id=_optional_string(lease.get("lease_id")))
@@ -296,6 +303,7 @@ class VideoToolkitAgentctlWorker:
                 "completion": _summarize_completion(completion),
             },
             token=self.config.token,
+            extra_tokens=(self.config.artifact_token,),
         )
 
     def run_loop(self, *, max_jobs: int | None = None) -> dict[str, Any]:
@@ -325,6 +333,7 @@ class VideoToolkitAgentctlWorker:
                 "last_result": last_result,
             },
             token=self.config.token,
+            extra_tokens=(self.config.artifact_token,),
         )
 
     def heartbeat(self) -> dict[str, Any]:
@@ -558,7 +567,7 @@ class VideoToolkitAgentctlWorker:
         }
         return self.client.post(
             f"/runtime/backends/jobs/{job_id}/complete",
-            _caller_safe(body, token=self.config.token),
+            _caller_safe(body, token=self.config.token, extra_tokens=(self.config.artifact_token,)),
         )
 
 
@@ -634,6 +643,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--backend-id", help="Runtime backend id. Defaults to local.")
     parser.add_argument("--artifact-root", help="Local artifact store root for worker execution.")
     parser.add_argument("--artifact-base-url", help="Base URL used to fetch relative artifact download URLs.")
+    parser.add_argument(
+        "--artifact-token",
+        help="Bearer token for artifact downloads. Defaults to VIDEO_TOOLKIT_ARTIFACT_TOKEN, then the control-plane token.",
+    )
     parser.add_argument("--max-artifact-bytes", type=int, help="Maximum bytes per materialized input artifact.")
     parser.add_argument(
         "--allowed-resource-classes",
@@ -679,6 +692,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         idle_sleep_seconds=args.idle_sleep_seconds,
         artifact_root=args.artifact_root,
         artifact_base_url=args.artifact_base_url,
+        artifact_token=args.artifact_token,
         max_artifact_bytes=args.max_artifact_bytes,
         allowed_resource_classes=parse_csv_tuple(args.allowed_resource_classes)
         if args.allowed_resource_classes is not None
@@ -709,7 +723,13 @@ def main(argv: Sequence[str] | None = None) -> int:
             "enqueued": _summarize_enqueue(enqueued),
             "worker_run": result,
         }
-    print(json.dumps(_caller_safe(result, token=config.token), ensure_ascii=False, sort_keys=True))
+    print(
+        json.dumps(
+            _caller_safe(result, token=config.token, extra_tokens=(config.artifact_token,)),
+            ensure_ascii=False,
+            sort_keys=True,
+        )
+    )
     return 0 if result.get("ok") else 2
 
 
@@ -966,7 +986,15 @@ def _optional_string(value: Any) -> str | None:
     return value if isinstance(value, str) and value else None
 
 
-def _caller_safe(value: Any, *, token: str | None) -> Any:
+def _caller_safe(
+    value: Any,
+    *,
+    token: str | None,
+    extra_tokens: Sequence[str | None] = (),
+) -> Any:
+    redaction_tokens = tuple(
+        item for item in (token, *extra_tokens) if isinstance(item, str) and item
+    )
     if isinstance(value, Mapping):
         safe: dict[str, Any] = {}
         for key, child in value.items():
@@ -977,12 +1005,14 @@ def _caller_safe(value: Any, *, token: str | None) -> Any:
             if any(part in normalized_key for part in ("token", "secret", "password", "api_key", "private_key")):
                 safe[key_string] = "[redacted]"
             else:
-                safe[key_string] = _caller_safe(child, token=token)
+                safe[key_string] = _caller_safe(child, token=token, extra_tokens=extra_tokens)
         return safe
     if isinstance(value, list):
-        return [_caller_safe(child, token=token) for child in value]
+        return [_caller_safe(child, token=token, extra_tokens=extra_tokens) for child in value]
     if isinstance(value, str):
-        rendered = value.replace(token, "[redacted]") if token else value
+        rendered = value
+        for redaction_token in redaction_tokens:
+            rendered = rendered.replace(redaction_token, "[redacted]")
         if any(pattern.search(rendered) for pattern in LOCAL_DETAIL_PATTERNS):
             return "[redacted]"
         if any(pattern.search(rendered) for pattern in URL_OR_SECRET_PATTERNS):
