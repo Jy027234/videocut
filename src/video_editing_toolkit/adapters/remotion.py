@@ -37,6 +37,8 @@ _RAW_COMMAND_PATTERNS = (
     re.compile(r"(?<![A-Za-z0-9_])(?:cmd|powershell)(?:\.exe)?\s+", re.IGNORECASE),
 )
 _FORBIDDEN_PUBLIC_KEYS = {
+    "endpoint",
+    "dispatcher_endpoint",
     "storage_uri",
     "local_path",
     "file_path",
@@ -88,11 +90,14 @@ class RemotionAdapter(BaseAdapter):
                 )
 
             render_job = build_remotion_render_job(request, validation)
+            dispatcher_readiness = build_dispatcher_readiness(request.input)
+            render_job["dispatcher_readiness"] = dispatcher_readiness
             output: dict[str, Any] = {
                 "schema": REMOTION_RENDER_JOB_SCHEMA,
                 "dispatcher_required": True,
                 "status": "dispatcher_required",
                 "render_job": render_job,
+                "dispatcher_readiness": dispatcher_readiness,
                 "render_job_id": render_job["render_job_id"],
                 "composition_id": validation["composition"]["composition_id"],
                 "chromium_required": True,
@@ -294,6 +299,111 @@ def build_remotion_render_job(
     }
 
 
+def build_dispatcher_readiness(input_payload: Mapping[str, Any]) -> dict[str, Any]:
+    capabilities = _optional_mapping(input_payload.get("dispatcher_capabilities"), "$.dispatcher_capabilities")
+    policy = _optional_mapping(input_payload.get("dispatcher_policy"), "$.dispatcher_policy")
+    has_preflight_input = (
+        capabilities is not None
+        or policy is not None
+        or "license_confirmation" in input_payload
+    )
+
+    checks = [
+        _runtime_check("nodejs", capabilities, "nodejs"),
+        _runtime_check("chromium", capabilities, "chromium"),
+        _runtime_check("remotion", capabilities, "remotion"),
+        _license_check(input_payload.get("license_confirmation"), has_preflight_input),
+        _sandbox_check(policy),
+        _network_check(policy),
+    ]
+    blocked = any(check["status"] == "blocked" for check in checks)
+    ready = all(check["status"] == "ready" for check in checks)
+    status = "blocked" if blocked else "ready" if ready else "unknown"
+    return {
+        "status": status,
+        "runtime_execution": "not_started",
+        "preflight_source": "caller_provided" if has_preflight_input else "not_provided",
+        "checks": checks,
+    }
+
+
+def _runtime_check(name: str, capabilities: Mapping[str, Any] | None, key: str) -> dict[str, str]:
+    if capabilities is None or key not in capabilities:
+        return _readiness_check(name, "unknown", "capability_not_provided")
+    state = _readiness_state(capabilities[key])
+    if state == "ready":
+        return _readiness_check(name, "ready", "capability_ready")
+    if state == "blocked":
+        return _readiness_check(name, "blocked", "capability_unavailable")
+    return _readiness_check(name, "unknown", "capability_unrecognized")
+
+
+def _license_check(value: Any, has_preflight_input: bool) -> dict[str, str]:
+    if _confirmation_state(value) == "confirmed":
+        return _readiness_check("license", "ready", "license_confirmed")
+    if value is None and not has_preflight_input:
+        return _readiness_check("license", "unknown", "license_confirmation_not_provided")
+    return _readiness_check("license", "blocked", "license_confirmation_required")
+
+
+def _sandbox_check(policy: Mapping[str, Any] | None) -> dict[str, str]:
+    sandbox = _optional_mapping(policy.get("sandbox"), "$.dispatcher_policy.sandbox") if policy else None
+    if sandbox is None:
+        return _readiness_check("sandbox", "unknown", "sandbox_policy_not_provided")
+    execution = str(sandbox.get("execution") or "").lower()
+    filesystem = str(sandbox.get("filesystem") or "").lower()
+    if execution == "dispatcher_managed" and filesystem == "artifact_ref_only":
+        return _readiness_check("sandbox", "ready", "dispatcher_managed_artifact_ref_only")
+    return _readiness_check("sandbox", "blocked", "sandbox_policy_noncompliant")
+
+
+def _network_check(policy: Mapping[str, Any] | None) -> dict[str, str]:
+    if policy is None:
+        return _readiness_check("network", "unknown", "network_policy_not_provided")
+    value = str(
+        policy.get("network")
+        or policy.get("egress")
+        or policy.get("network_egress")
+        or ""
+    ).lower()
+    if value == "deny_by_default":
+        return _readiness_check("network", "ready", "egress_deny_by_default")
+    if value in {"allowlist", "allowlisted", "restricted"}:
+        return _readiness_check("network", "warning", "egress_restricted")
+    if value in {"allow_all", "unrestricted", "public_internet"}:
+        return _readiness_check("network", "blocked", "egress_policy_noncompliant")
+    return _readiness_check("network", "unknown", "network_policy_not_provided")
+
+
+def _readiness_check(name: str, status: str, code: str) -> dict[str, str]:
+    return {"name": name, "status": status, "code": code}
+
+
+def _readiness_state(value: Any) -> str:
+    if value is True:
+        return "ready"
+    if value is False:
+        return "blocked"
+    if isinstance(value, Mapping):
+        return _readiness_state(value.get("status") or value.get("available") or value.get("ready"))
+    normalized = str(value).lower()
+    if normalized in {"ready", "available", "installed", "ok", "true", "yes"}:
+        return "ready"
+    if normalized in {"blocked", "unavailable", "missing", "disabled", "false", "no"}:
+        return "blocked"
+    return "unknown"
+
+
+def _confirmation_state(value: Any) -> str:
+    if value is True:
+        return "confirmed"
+    if isinstance(value, Mapping):
+        confirmed = value.get("confirmed")
+        if confirmed is True:
+            return "confirmed"
+    return "missing"
+
+
 def _validate_props(props: Mapping[str, Any], schema: Mapping[str, Any]) -> None:
     required = schema.get("required", [])
     if isinstance(required, Sequence) and not isinstance(required, (str, bytes, bytearray)):
@@ -364,6 +474,12 @@ def _mapping(value: Any, path: str) -> Mapping[str, Any]:
     if not isinstance(value, Mapping):
         raise RemotionTemplateError("remotion.invalid_payload", f"{path} must be an object.")
     return value
+
+
+def _optional_mapping(value: Any, path: str) -> Mapping[str, Any] | None:
+    if value is None:
+        return None
+    return _mapping(value, path)
 
 
 def _sequence(value: Any, path: str) -> Sequence[Any]:

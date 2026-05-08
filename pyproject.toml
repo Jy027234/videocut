@@ -40,6 +40,9 @@ analysis = [
 speech = [
   "platformdirs",
 ]
+tts = [
+  "onnxruntime>=1.17",
+]
 
 [tool.setuptools.packages.find]
 where = ["src"]

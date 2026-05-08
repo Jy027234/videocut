@@ -104,6 +104,21 @@ manual commands can reuse mounted model files without baking weights into the
 image. Model execution still requires `VET_ALLOW_WHISPER=1`; runtime downloads
 still require `VET_ALLOW_WHISPER_DOWNLOAD=1`.
 
+`tts` is an optional dependency group for future MOSS-TTS-Nano ONNX CPU work.
+It is not installed in the default image and the adapter does not download
+models or synthesize audio by default. P1.2 only supports preflight checks for
+`onnxruntime` CPU provider availability and a mounted local bundle layout:
+
+```text
+MOSS-TTS-Nano-100M-ONNX/
+MOSS-Audio-Tokenizer-Nano-ONNX/
+```
+
+Point preflight at the parent directory with `VET_MOSS_TTS_NANO_MODEL_ROOT`, or
+use explicit `VET_MOSS_TTS_NANO_TTS_BUNDLE` and
+`VET_MOSS_TTS_NANO_CODEC_BUNDLE` paths. These paths stay adapter-private and
+must not be returned to agents or Platform Core callers.
+
 ## Mounted paths
 
 Compose mounts the project directory at `/workspace` and a Docker volume at

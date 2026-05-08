@@ -1227,6 +1227,9 @@
       "artifact_policy": "artifact_ref_required",
       "error_codes": [
         "TTS_UNAVAILABLE",
+        "TTS_PREFLIGHT_BLOCKED",
+        "TTS_MODEL_BUNDLE_INCOMPLETE",
+        "TTS_RUNTIME_DEPENDENCY_MISSING",
         "VOICE_PROFILE_DISABLED",
         "APPROVAL_REQUIRED",
         "ARTIFACT_ACCESS_DENIED"
@@ -1459,6 +1462,21 @@
     {
       "code": "QUOTA_EXCEEDED",
       "message": "Quota or rate limit was exceeded.",
+      "retryable": false
+    },
+    {
+      "code": "TTS_PREFLIGHT_BLOCKED",
+      "message": "TTS runtime or local model bundle preflight did not pass.",
+      "retryable": false
+    },
+    {
+      "code": "TTS_MODEL_BUNDLE_INCOMPLETE",
+      "message": "The local MOSS-TTS-Nano ONNX bundle is missing one or more required files.",
+      "retryable": false
+    },
+    {
+      "code": "TTS_RUNTIME_DEPENDENCY_MISSING",
+      "message": "The local TTS runtime dependency is not installed or lacks CPU execution support.",
       "retryable": false
     },
     {

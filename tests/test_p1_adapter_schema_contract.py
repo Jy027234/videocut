@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import types
+from pathlib import Path
 from typing import Any, Mapping
 
 import pytest
 
 from conftest import MANIFESTS_DIR, SCHEMAS_DIR, assert_no_public_path_or_command_leak, load_json
+import video_editing_toolkit.adapters.tts as tts_adapter
 from video_editing_toolkit.adapters import AdapterContext, AdapterRequest, AdapterStatus
 from video_editing_toolkit.adapters.qc import GENERATE_QC_REPORT, QCAdapter
 from video_editing_toolkit.adapters.remotion import (
@@ -75,6 +78,29 @@ def test_p1_voice_clone_output_validates_as_deferred_failure() -> None:
     assert result.status == AdapterStatus.FAILED
     assert result.output["reason_code"] == "tts.voice_clone_deferred"
     assert_no_public_path_or_command_leak(result.output)
+    _validate_output_against_p1_manifest_schema(GENERATE_VOICEOVER, result.output)
+
+
+def test_p1_tts_preflight_output_validates_against_manifest_schema_refs(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    _install_fake_onnxruntime(monkeypatch)
+    bundle_root = _complete_tts_fixture_bundle(tmp_path)
+    result = TTSAdapter().handle(
+        _request(
+            GENERATE_VOICEOVER,
+            {
+                "synthesis_mode": "preflight_only",
+                "model_root": str(bundle_root),
+            },
+        )
+    )
+
+    assert result.status == AdapterStatus.SUCCEEDED
+    assert result.output["runtime_preflight"]["status"] == "passed"
+    assert_no_public_path_or_command_leak(result.output)
+    assert str(bundle_root) not in str(result.output)
     _validate_output_against_p1_manifest_schema(GENERATE_VOICEOVER, result.output)
 
 
@@ -168,3 +194,28 @@ def _valid_remotion_payload() -> dict[str, Any]:
         "composition_id": "Main",
         "props": {"brand_color": "#31A8FF"},
     }
+
+
+def _install_fake_onnxruntime(monkeypatch) -> None:
+    fake_runtime = types.SimpleNamespace(get_available_providers=lambda: ["CPUExecutionProvider"])
+
+    def import_module(name: str):
+        if name == "onnxruntime":
+            return fake_runtime
+        return __import__(name)
+
+    monkeypatch.setattr(tts_adapter.importlib, "import_module", import_module)
+
+
+def _complete_tts_fixture_bundle(tmp_path: Path) -> Path:
+    bundle_root = tmp_path / "moss-tts-nano"
+    required_files = {
+        tts_adapter._TTS_BUNDLE_DIRNAME: tts_adapter._TTS_BUNDLE_REQUIRED_FILES,
+        tts_adapter._CODEC_BUNDLE_DIRNAME: tts_adapter._CODEC_BUNDLE_REQUIRED_FILES,
+    }
+    for folder, filenames in required_files.items():
+        bundle_dir = bundle_root / folder
+        bundle_dir.mkdir(parents=True)
+        for filename in filenames:
+            (bundle_dir / filename).touch()
+    return bundle_root

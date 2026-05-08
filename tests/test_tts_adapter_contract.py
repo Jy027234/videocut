@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import json
+import types
 from pathlib import Path
 from typing import Any
 
+import video_editing_toolkit.adapters.tts as tts_adapter
 from video_editing_toolkit.adapters import AdapterContext, AdapterRequest, AdapterStatus
 from video_editing_toolkit.adapters.routing import (
     P1_CAPABILITY_ROUTES,
@@ -162,6 +164,123 @@ def test_tts_plan_only_can_emit_manifest_artifact(tmp_path: Path) -> None:
     assert manifest["voiceover_plan"]["segment_count"] == 1
 
 
+def test_tts_preflight_blocks_when_runtime_missing(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    _clear_model_env(monkeypatch)
+    bundle_root = _complete_tts_fixture_bundle(tmp_path)
+
+    def missing_runtime(name: str):
+        if name == "onnxruntime":
+            raise ImportError("fixture missing runtime")
+        return __import__(name)
+
+    monkeypatch.setattr(tts_adapter.importlib, "import_module", missing_runtime)
+    adapter = TTSAdapter()
+
+    result = adapter.handle(
+        _request(
+            {
+                "synthesis_mode": "preflight_only",
+                "model_root": str(bundle_root),
+            }
+        )
+    )
+
+    assert result.status == AdapterStatus.SUCCEEDED
+    preflight = result.output["runtime_preflight"]
+    assert preflight["status"] == "blocked"
+    assert preflight["reason_code"] == "tts.onnxruntime_missing"
+    assert result.output["model_runtime"]["execution_enabled"] is False
+    assert result.output["audio_artifact_ref"] is None
+    assert_no_public_path_or_command_leak(result.output)
+    assert str(bundle_root) not in json.dumps(result.output, sort_keys=True)
+
+
+def test_tts_preflight_blocks_when_bundles_missing(monkeypatch) -> None:
+    _clear_model_env(monkeypatch)
+    _install_fake_onnxruntime(monkeypatch)
+    adapter = TTSAdapter()
+
+    result = adapter.handle(_request({"preflight_only": True}))
+
+    assert result.status == AdapterStatus.SUCCEEDED
+    preflight = result.output["runtime_preflight"]
+    assert preflight["status"] == "blocked"
+    assert preflight["reason_code"] == "tts.tts_bundle_unconfigured"
+    assert preflight["bundle_summary"]["configured"] is False
+    assert preflight["bundle_summary"]["tts_bundle"]["configured"] is False
+    assert preflight["bundle_summary"]["codec_bundle"]["configured"] is False
+    assert_no_public_path_or_command_leak(result.output)
+
+
+def test_tts_preflight_blocks_when_fixture_bundle_incomplete(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    _clear_model_env(monkeypatch)
+    _install_fake_onnxruntime(monkeypatch)
+    bundle_root = tmp_path / "moss-tts-nano"
+    tts_bundle = bundle_root / tts_adapter._TTS_BUNDLE_DIRNAME
+    codec_bundle = bundle_root / tts_adapter._CODEC_BUNDLE_DIRNAME
+    tts_bundle.mkdir(parents=True)
+    codec_bundle.mkdir(parents=True)
+    (tts_bundle / tts_adapter._TTS_BUNDLE_REQUIRED_FILES[0]).touch()
+    (codec_bundle / tts_adapter._CODEC_BUNDLE_REQUIRED_FILES[0]).touch()
+    adapter = TTSAdapter()
+
+    result = adapter.handle(
+        _request(
+            {
+                "synthesis_mode": "preflight_only",
+                "model_root": str(bundle_root),
+            }
+        )
+    )
+
+    preflight = result.output["runtime_preflight"]
+    assert preflight["status"] == "blocked"
+    assert preflight["reason_code"] == "tts.tts_bundle_incomplete"
+    assert preflight["bundle_summary"]["tts_bundle"]["present_file_count"] == 1
+    assert preflight["bundle_summary"]["codec_bundle"]["present_file_count"] == 1
+    assert "tokenizer.model" in preflight["bundle_summary"]["tts_bundle"]["missing_required_files"]
+    assert_no_public_path_or_command_leak(result.output)
+    assert str(bundle_root) not in json.dumps(result.output, sort_keys=True)
+
+
+def test_tts_preflight_passes_with_complete_fixture_bundle(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    _clear_model_env(monkeypatch)
+    _install_fake_onnxruntime(monkeypatch)
+    bundle_root = _complete_tts_fixture_bundle(tmp_path)
+    adapter = TTSAdapter()
+
+    result = adapter.handle(
+        _request(
+            {
+                "synthesis_mode": "preflight_only",
+                "model_root": str(bundle_root),
+            }
+        )
+    )
+
+    assert result.status == AdapterStatus.SUCCEEDED
+    preflight = result.output["runtime_preflight"]
+    assert preflight["status"] == "passed"
+    assert preflight["reason_code"] == "tts.preflight_passed"
+    assert preflight["execution_enabled"] is False
+    assert result.output["model_runtime"]["execution_enabled"] is False
+    assert preflight["bundle_summary"]["configured"] is True
+    assert preflight["bundle_summary"]["tts_bundle"]["complete"] is True
+    assert preflight["bundle_summary"]["codec_bundle"]["complete"] is True
+    assert all(check["status"] == "passed" for check in preflight["checks"])
+    assert_no_public_path_or_command_leak(result.output)
+    assert str(bundle_root) not in json.dumps(result.output, sort_keys=True)
+
+
 def test_tts_routing_resolves_p1_voiceover_adapter() -> None:
     route = resolve_p1_experimental_route(GENERATE_VOICEOVER)
     adapter = build_p1_experimental_adapter(GENERATE_VOICEOVER)
@@ -202,5 +321,39 @@ def _clear_model_env(monkeypatch) -> None:
         "VET_MOSS_TTS_NANO_MODEL_PATH",
         "VIDEO_TOOLKIT_MOSS_TTS_NANO_MODEL_PATH",
         "MOSS_TTS_NANO_MODEL_PATH",
+        "VET_MOSS_TTS_NANO_MODEL_ROOT",
+        "VIDEO_TOOLKIT_MOSS_TTS_NANO_MODEL_ROOT",
+        "MOSS_TTS_NANO_MODEL_ROOT",
+        "VET_MOSS_TTS_NANO_TTS_BUNDLE",
+        "VIDEO_TOOLKIT_MOSS_TTS_NANO_TTS_BUNDLE",
+        "MOSS_TTS_NANO_TTS_BUNDLE",
+        "VET_MOSS_TTS_NANO_CODEC_BUNDLE",
+        "VIDEO_TOOLKIT_MOSS_TTS_NANO_CODEC_BUNDLE",
+        "MOSS_TTS_NANO_CODEC_BUNDLE",
     ):
         monkeypatch.delenv(env_var, raising=False)
+
+
+def _install_fake_onnxruntime(monkeypatch) -> None:
+    fake_runtime = types.SimpleNamespace(get_available_providers=lambda: ["CPUExecutionProvider"])
+
+    def import_module(name: str):
+        if name == "onnxruntime":
+            return fake_runtime
+        return __import__(name)
+
+    monkeypatch.setattr(tts_adapter.importlib, "import_module", import_module)
+
+
+def _complete_tts_fixture_bundle(tmp_path: Path) -> Path:
+    bundle_root = tmp_path / "moss-tts-nano"
+    required_files = {
+        tts_adapter._TTS_BUNDLE_DIRNAME: tts_adapter._TTS_BUNDLE_REQUIRED_FILES,
+        tts_adapter._CODEC_BUNDLE_DIRNAME: tts_adapter._CODEC_BUNDLE_REQUIRED_FILES,
+    }
+    for folder, filenames in required_files.items():
+        bundle_dir = bundle_root / folder
+        bundle_dir.mkdir(parents=True)
+        for filename in filenames:
+            (bundle_dir / filename).touch()
+    return bundle_root

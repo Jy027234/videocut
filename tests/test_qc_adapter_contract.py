@@ -32,7 +32,7 @@ def test_qc_report_passes_clean_timeline_subtitles_and_brand_rules() -> None:
     report = result.output["qc_report"]
     assert report["schema"] == QC_REPORT_SCHEMA
     assert report["summary"]["status"] == "pass"
-    assert report["severity_counts"] == {"pass": 6, "warning": 0, "blocking": 0}
+    assert report["severity_counts"] == {"pass": 10, "warning": 0, "blocking": 0}
     assert report["blocking_issues"] == []
     assert report["warnings"] == []
     assert {check["check_id"] for check in report["checks"]} == {
@@ -40,6 +40,10 @@ def test_qc_report_passes_clean_timeline_subtitles_and_brand_rules() -> None:
         "timeline.overlap",
         "subtitle.bounds",
         "media.drift",
+        "media.integrity",
+        "media.delivery_profile",
+        "audio.loudness",
+        "visual.sampling",
         "brand.keywords",
         "brand.safe_area",
     }
@@ -167,6 +171,93 @@ def test_qc_report_writes_artifact_when_store_is_available(tmp_path: Path) -> No
     assert str(tmp_path) not in json.dumps(result.output, sort_keys=True)
 
 
+def test_qc_report_warns_from_production_quality_evidence_without_path_leaks() -> None:
+    payload = _passing_payload() | {
+        "_worker_media_path": r"C:\private\customer\raw\launch.mp4",
+        "media_probe": {
+            "duration_seconds": 10.1,
+            "streams": [
+                {"codec_type": "video", "width": 1080, "height": 1080, "avg_frame_rate": "24/1"},
+                {"codec_type": "audio"},
+            ],
+        },
+        "delivery_targets": {
+            "platform_profile": {
+                "aspect_ratio": "9:16",
+                "min_width": 1080,
+                "min_height": 1920,
+                "min_fps": 29.97,
+                "max_duration_seconds": 60,
+                "min_lufs": -20,
+                "max_lufs": -14,
+                "max_true_peak_dbtp": -1,
+                "max_silence_ratio": 0.1,
+            }
+        },
+        "audio_quality": {
+            "quality_summary": {"duration_seconds": 10.1, "integrated_lufs": -25.0, "true_peak_dbtp": -2.0},
+            "silence_ratio": 0.15,
+        },
+        "visual_quality": {
+            "quality_summary": {"duration_seconds": 10.0},
+            "black_frames": [{"start_seconds": 2.0, "duration_seconds": 0.2}],
+            "low_light_ratio": 0.25,
+        },
+    }
+
+    result = _run_qc(payload)
+
+    assert result.status == AdapterStatus.SUCCEEDED
+    report = result.output["qc_report"]
+    assert report["summary"]["status"] == "warning"
+    warning_ids = {check["check_id"] for check in report["warnings"]}
+    assert {
+        "media.delivery_profile",
+        "audio.loudness",
+        "visual.sampling",
+    }.issubset(warning_ids)
+    assert "media.integrity" not in warning_ids
+    assert report["severity_counts"]["blocking"] == 0
+    assert_no_public_path_or_command_leak(result.output)
+    assert "private" not in json.dumps(result.output, sort_keys=True).casefold()
+
+
+def test_qc_report_blocks_from_probe_loudness_and_visual_sampling_evidence() -> None:
+    payload = _passing_payload() | {
+        "_worker_media_path": "/mnt/private/customer/raw/launch.mp4",
+        "media_probe": {
+            "duration_seconds": 0,
+            "errors": [{"code": "decode_failure", "path": "/mnt/private/customer/raw/launch.mp4"}],
+            "streams": [{"codec_type": "audio"}],
+        },
+        "audio_quality": {
+            "quality_summary": {
+                "duration_seconds": 10.1,
+                "integrated_lufs": -16.0,
+                "true_peak_dbtp": 0.4,
+            },
+            "silence_ratio": 0.65,
+        },
+        "visual_quality": {
+            "quality_summary": {"duration_seconds": 10.0},
+            "black_frame_seconds": 3.0,
+            "freeze_frame_seconds": 3.5,
+        },
+    }
+
+    result = _run_qc(payload)
+
+    assert result.status == AdapterStatus.SUCCEEDED
+    report = result.output["qc_report"]
+    assert report["summary"]["status"] == "blocking"
+    blocking_ids = {check["check_id"] for check in report["blocking_issues"]}
+    assert {"media.integrity", "audio.loudness", "visual.sampling"}.issubset(blocking_ids)
+    assert_no_public_path_or_command_leak(result.output)
+    output_json = json.dumps(result.output, sort_keys=True)
+    assert "/mnt/private" not in output_json
+    assert "launch.mp4" not in output_json
+
+
 def test_qc_generate_report_resolves_through_p1_route() -> None:
     route = resolve_p1_experimental_route(GENERATE_QC_REPORT)
     adapter = build_p1_experimental_adapter(GENERATE_QC_REPORT)
@@ -223,6 +314,27 @@ def _passing_payload() -> dict[str, Any]:
         "subtitles": [{"start_seconds": 0.2, "end_seconds": 2.0, "text": "Welcome to Acme"}],
         "audio_quality": {"quality_summary": {"duration_seconds": 10.1}},
         "visual_quality": {"quality_summary": {"duration_seconds": 10.0}},
+        "media_probe": {
+            "duration_seconds": 10.1,
+            "streams": [
+                {"codec_type": "video", "width": 1080, "height": 1920, "avg_frame_rate": "30/1"},
+                {"codec_type": "audio"},
+            ],
+        },
+        "delivery_targets": {
+            "platform_profile": {
+                "aspect_ratio": "9:16",
+                "width": 1080,
+                "height": 1920,
+                "min_fps": 29.97,
+                "max_fps": 30.0,
+                "max_duration_seconds": 60.0,
+                "min_lufs": -24.0,
+                "max_lufs": -12.0,
+                "max_true_peak_dbtp": -1.0,
+                "max_silence_ratio": 0.2,
+            }
+        },
         "brand_kit": {
             "required_keywords": ["Acme"],
             "required_safe_area": {"left": 0.1, "right": 0.9, "top": 0.1, "bottom": 0.9},

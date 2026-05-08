@@ -582,6 +582,16 @@
           "required": [
             "script_artifact_ref"
           ]
+        },
+        {
+          "required": [
+            "preflight_only"
+          ]
+        },
+        {
+          "required": [
+            "synthesis_mode"
+          ]
         }
       ],
       "properties": {
@@ -686,7 +696,8 @@
         "synthesis_mode": {
           "type": "string",
           "enum": [
-            "plan_only"
+            "plan_only",
+            "preflight_only"
           ]
         },
         "mode": {
@@ -694,6 +705,36 @@
         },
         "dry_run": {
           "type": "boolean"
+        },
+        "preflight_only": {
+          "type": "boolean"
+        },
+        "model_root": {
+          "type": "string"
+        },
+        "model_bundle_root": {
+          "type": "string"
+        },
+        "moss_tts_nano_model_root": {
+          "type": "string"
+        },
+        "tts_bundle": {
+          "type": "string"
+        },
+        "tts_bundle_path": {
+          "type": "string"
+        },
+        "moss_tts_nano_tts_bundle": {
+          "type": "string"
+        },
+        "codec_bundle": {
+          "type": "string"
+        },
+        "codec_bundle_path": {
+          "type": "string"
+        },
+        "moss_tts_nano_codec_bundle": {
+          "type": "string"
         },
         "sample_rate_hz": {
           "type": "integer",
@@ -794,6 +835,9 @@
           "type": "object",
           "additionalProperties": true
         },
+        "runtime_preflight": {
+          "$ref": "#/$defs/tts_runtime_preflight"
+        },
         "model_runtime": {
           "type": "object",
           "additionalProperties": false,
@@ -880,6 +924,14 @@
         "artifact_ref": {
           "$ref": "#/$defs/public_artifact_ref"
         },
+        "media_probe": {
+          "type": "object",
+          "additionalProperties": true
+        },
+        "probe": {
+          "type": "object",
+          "additionalProperties": true
+        },
         "timeline": {
           "type": "object",
           "additionalProperties": true
@@ -919,6 +971,14 @@
           "additionalProperties": true
         },
         "brand_kit": {
+          "type": "object",
+          "additionalProperties": true
+        },
+        "delivery_targets": {
+          "type": "object",
+          "additionalProperties": true
+        },
+        "platform_profile": {
           "type": "object",
           "additionalProperties": true
         },
@@ -1124,6 +1184,25 @@
         "format": {
           "type": "string"
         },
+        "dispatcher_capabilities": {
+          "type": "object",
+          "additionalProperties": true
+        },
+        "dispatcher_policy": {
+          "type": "object",
+          "additionalProperties": true
+        },
+        "license_confirmation": {
+          "oneOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "object",
+              "additionalProperties": true
+            }
+          ]
+        },
         "options": {
           "type": "object",
           "additionalProperties": true
@@ -1307,6 +1386,25 @@
         "format": {
           "type": "string"
         },
+        "dispatcher_capabilities": {
+          "type": "object",
+          "additionalProperties": true
+        },
+        "dispatcher_policy": {
+          "type": "object",
+          "additionalProperties": true
+        },
+        "license_confirmation": {
+          "oneOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "object",
+              "additionalProperties": true
+            }
+          ]
+        },
         "options": {
           "type": "object",
           "additionalProperties": true
@@ -1350,6 +1448,9 @@
         },
         "license_confirmation_required": {
           "type": "boolean"
+        },
+        "dispatcher_readiness": {
+          "$ref": "#/$defs/dispatcher_readiness"
         },
         "render_job": {
           "type": "object",
@@ -1423,6 +1524,189 @@
         "details": {
           "type": "object",
           "additionalProperties": true
+        }
+      }
+    },
+    "dispatcher_readiness": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "runtime_execution",
+        "preflight_source",
+        "checks"
+      ],
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": [
+            "ready",
+            "blocked",
+            "unknown"
+          ]
+        },
+        "runtime_execution": {
+          "const": "not_started"
+        },
+        "preflight_source": {
+          "type": "string",
+          "enum": [
+            "caller_provided",
+            "not_provided"
+          ]
+        },
+        "checks": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "name",
+              "status",
+              "code"
+            ],
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "ready",
+                  "blocked",
+                  "unknown",
+                  "warning"
+                ]
+              },
+              "code": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      }
+    },
+    "tts_runtime_preflight": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema",
+        "provider",
+        "backend",
+        "status",
+        "reason_code",
+        "execution_enabled",
+        "checks",
+        "bundle_summary"
+      ],
+      "properties": {
+        "schema": {
+          "const": "video_editing_toolkit.tts_runtime_preflight.v0"
+        },
+        "provider": {
+          "const": "MOSS-TTS-Nano"
+        },
+        "backend": {
+          "const": "onnx_cpu"
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "passed",
+            "blocked",
+            "unknown"
+          ]
+        },
+        "reason_code": {
+          "type": "string"
+        },
+        "execution_enabled": {
+          "const": false
+        },
+        "checks": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": true,
+            "required": [
+              "name",
+              "status",
+              "reason_code"
+            ],
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "passed",
+                  "blocked",
+                  "unknown"
+                ]
+              },
+              "reason_code": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "bundle_summary": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "configured",
+            "model_root_configured",
+            "tts_bundle",
+            "codec_bundle"
+          ],
+          "properties": {
+            "configured": {
+              "type": "boolean"
+            },
+            "model_root_configured": {
+              "type": "boolean"
+            },
+            "tts_bundle": {
+              "$ref": "#/$defs/tts_bundle_summary"
+            },
+            "codec_bundle": {
+              "$ref": "#/$defs/tts_bundle_summary"
+            }
+          }
+        }
+      }
+    },
+    "tts_bundle_summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "configured",
+        "complete",
+        "required_file_count",
+        "present_file_count",
+        "missing_required_files"
+      ],
+      "properties": {
+        "configured": {
+          "type": "boolean"
+        },
+        "complete": {
+          "type": "boolean"
+        },
+        "required_file_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "present_file_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "missing_required_files": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
         }
       }
     },

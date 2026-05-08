@@ -75,6 +75,10 @@ def build_qc_report(input_payload: Mapping[str, Any]) -> dict[str, Any]:
         _timeline_overlap_check(input_payload),
         _subtitle_bounds_check(input_payload),
         _media_drift_check(input_payload),
+        _media_integrity_check(input_payload),
+        _media_delivery_profile_check(input_payload),
+        _audio_loudness_check(input_payload),
+        _visual_sampling_check(input_payload),
         _brand_keyword_check(input_payload),
         _brand_safe_area_check(input_payload),
     ]
@@ -233,6 +237,367 @@ def _media_drift_check(input_payload: Mapping[str, Any]) -> dict[str, Any]:
             },
         )
     return _check("media.drift", "pass", "Audio/video drift is within threshold.")
+
+
+def _media_integrity_check(input_payload: Mapping[str, Any]) -> dict[str, Any]:
+    probe = _media_probe(input_payload)
+    if probe is None:
+        return _check(
+            "media.integrity",
+            "pass",
+            "Media integrity check has insufficient probe evidence.",
+        )
+
+    blocking_refs: list[str] = []
+    warning_refs: list[str] = []
+    issue_codes: list[str] = []
+
+    probe_issues = _list(probe.get("errors")) + _list(probe.get("probe_errors"))
+    for index, issue in enumerate(probe_issues):
+        blocking_refs.append(f"media_probe.errors[{index}]")
+        if isinstance(issue, Mapping):
+            issue_codes.append(_safe_code(issue.get("code")))
+        else:
+            issue_codes.append("probe_error")
+
+    streams = _media_streams(probe)
+    has_video = any(stream["kind"] == "video" for stream in streams)
+    has_audio = any(stream["kind"] == "audio" for stream in streams)
+    duration = _probe_duration_seconds(input_payload)
+
+    if streams and not has_video:
+        blocking_refs.append("media_probe.streams.video")
+        issue_codes.append("missing_video_stream")
+    if streams and not has_audio:
+        warning_refs.append("media_probe.streams.audio")
+        issue_codes.append("missing_audio_stream")
+    if duration is not None and duration <= _EPSILON:
+        blocking_refs.append("media_probe.duration_seconds")
+        issue_codes.append("invalid_duration")
+    elif duration is None:
+        warning_refs.append("media_probe.duration_seconds")
+        issue_codes.append("missing_duration")
+
+    if blocking_refs:
+        return _check(
+            "media.integrity",
+            "blocking",
+            "Media probe evidence has blocking integrity issues.",
+            evidence_refs=blocking_refs + warning_refs,
+            details={
+                "issue_codes": _unique_ref(issue_codes),
+                "stream_count": len(streams),
+                "has_video_stream": has_video,
+                "has_audio_stream": has_audio,
+            },
+        )
+    if warning_refs:
+        return _check(
+            "media.integrity",
+            "warning",
+            "Media probe evidence has non-blocking integrity warnings.",
+            evidence_refs=warning_refs,
+            details={
+                "issue_codes": _unique_ref(issue_codes),
+                "stream_count": len(streams),
+                "has_video_stream": has_video,
+                "has_audio_stream": has_audio,
+            },
+        )
+    return _check("media.integrity", "pass", "Media integrity checks passed.")
+
+
+def _media_delivery_profile_check(input_payload: Mapping[str, Any]) -> dict[str, Any]:
+    profile = _delivery_profile(input_payload)
+    if profile is None:
+        return _check(
+            "media.delivery_profile",
+            "pass",
+            "Delivery profile check has insufficient target evidence.",
+        )
+
+    width = _positive_number(
+        _first_present(
+            _probe_value(input_payload, "width"),
+            _nested_value(profile, ("actual", "width")),
+        )
+    )
+    height = _positive_number(
+        _first_present(
+            _probe_value(input_payload, "height"),
+            _nested_value(profile, ("actual", "height")),
+        )
+    )
+    fps = _positive_number(
+        _first_present(
+            _probe_value(input_payload, "fps"),
+            _probe_value(input_payload, "frame_rate"),
+        )
+    )
+    duration = _probe_duration_seconds(input_payload) or _video_duration_seconds(input_payload)
+
+    evidence_refs: list[str] = []
+    issue_codes: list[str] = []
+
+    expected_width = _positive_number(profile.get("width", profile.get("target_width")))
+    expected_height = _positive_number(profile.get("height", profile.get("target_height")))
+    min_width = _positive_number(profile.get("min_width"))
+    min_height = _positive_number(profile.get("min_height"))
+    max_width = _positive_number(profile.get("max_width"))
+    max_height = _positive_number(profile.get("max_height"))
+    min_fps = _positive_number(profile.get("min_fps"))
+    max_fps = _positive_number(profile.get("max_fps"))
+    min_duration = _positive_number(profile.get("min_duration_seconds"))
+    max_duration = _positive_number(profile.get("max_duration_seconds"))
+    expected_ratio = _aspect_ratio(
+        profile.get("aspect_ratio", profile.get("target_aspect_ratio"))
+    )
+
+    if (
+        width is not None
+        and expected_width is not None
+        and abs(width - expected_width) > _EPSILON
+    ):
+        evidence_refs += ["media_probe.video.width", "delivery_targets.platform_profile.width"]
+        issue_codes.append("width_mismatch")
+    if (
+        height is not None
+        and expected_height is not None
+        and abs(height - expected_height) > _EPSILON
+    ):
+        evidence_refs += ["media_probe.video.height", "delivery_targets.platform_profile.height"]
+        issue_codes.append("height_mismatch")
+    if width is not None and min_width is not None and width + _EPSILON < min_width:
+        evidence_refs += ["media_probe.video.width", "delivery_targets.platform_profile.min_width"]
+        issue_codes.append("width_below_minimum")
+    if (
+        height is not None
+        and min_height is not None
+        and height + _EPSILON < min_height
+    ):
+        evidence_refs += [
+            "media_probe.video.height",
+            "delivery_targets.platform_profile.min_height",
+        ]
+        issue_codes.append("height_below_minimum")
+    if width is not None and max_width is not None and width - max_width > _EPSILON:
+        evidence_refs += ["media_probe.video.width", "delivery_targets.platform_profile.max_width"]
+        issue_codes.append("width_above_maximum")
+    if (
+        height is not None
+        and max_height is not None
+        and height - max_height > _EPSILON
+    ):
+        evidence_refs += [
+            "media_probe.video.height",
+            "delivery_targets.platform_profile.max_height",
+        ]
+        issue_codes.append("height_above_maximum")
+    if fps is not None and min_fps is not None and fps + _EPSILON < min_fps:
+        evidence_refs += ["media_probe.video.fps", "delivery_targets.platform_profile.min_fps"]
+        issue_codes.append("fps_below_minimum")
+    if fps is not None and max_fps is not None and fps - max_fps > _EPSILON:
+        evidence_refs += ["media_probe.video.fps", "delivery_targets.platform_profile.max_fps"]
+        issue_codes.append("fps_above_maximum")
+    if (
+        duration is not None
+        and min_duration is not None
+        and duration + _EPSILON < min_duration
+    ):
+        evidence_refs += [
+            "media_probe.duration_seconds",
+            "delivery_targets.platform_profile.min_duration_seconds",
+        ]
+        issue_codes.append("duration_below_minimum")
+    if (
+        duration is not None
+        and max_duration is not None
+        and duration - max_duration > _EPSILON
+    ):
+        evidence_refs += [
+            "media_probe.duration_seconds",
+            "delivery_targets.platform_profile.max_duration_seconds",
+        ]
+        issue_codes.append("duration_above_maximum")
+    if width is not None and height is not None and expected_ratio is not None:
+        actual_ratio = width / height
+        if abs(actual_ratio - expected_ratio) > 0.02:
+            evidence_refs += [
+                "media_probe.video.aspect_ratio",
+                "delivery_targets.platform_profile.aspect_ratio",
+            ]
+            issue_codes.append("aspect_ratio_mismatch")
+
+    if evidence_refs:
+        return _check(
+            "media.delivery_profile",
+            "warning",
+            "Media evidence does not match the delivery platform profile.",
+            evidence_refs=evidence_refs,
+            details={"issue_codes": _unique_ref(issue_codes)},
+        )
+    return _check(
+        "media.delivery_profile",
+        "pass",
+        "Media evidence matches the delivery platform profile.",
+    )
+
+
+def _audio_loudness_check(input_payload: Mapping[str, Any]) -> dict[str, Any]:
+    audio_quality = _mapping(input_payload.get("audio_quality"))
+    if audio_quality is None:
+        return _check("audio.loudness", "pass", "Audio loudness check has insufficient evidence.")
+
+    lufs = _number(
+        _first_present(
+            audio_quality.get("integrated_lufs"),
+            audio_quality.get("lufs"),
+            _nested_value(audio_quality, ("quality_summary", "integrated_lufs")),
+            _nested_value(audio_quality, ("summary", "integrated_lufs")),
+        )
+    )
+    true_peak = _number(
+        _first_present(
+            audio_quality.get("true_peak_dbtp"),
+            audio_quality.get("true_peak_db"),
+            _nested_value(audio_quality, ("quality_summary", "true_peak_dbtp")),
+            _nested_value(audio_quality, ("summary", "true_peak_dbtp")),
+        )
+    )
+    silence_ratio = _ratio(
+        _first_present(
+            audio_quality.get("silence_ratio"),
+            _nested_value(audio_quality, ("quality_summary", "silence_ratio")),
+            _nested_value(audio_quality, ("summary", "silence_ratio")),
+        )
+    )
+    profile = _delivery_profile(input_payload) or {}
+    min_lufs = _number(profile.get("min_lufs", -24.0))
+    max_lufs = _number(profile.get("max_lufs", -12.0))
+    max_true_peak = _number(profile.get("max_true_peak_dbtp", -1.0))
+    max_silence_ratio = _ratio(profile.get("max_silence_ratio", 0.2))
+
+    blocking_refs: list[str] = []
+    warning_refs: list[str] = []
+    issue_codes: list[str] = []
+
+    if lufs is not None and min_lufs is not None and lufs + _EPSILON < min_lufs:
+        warning_refs.append("audio_quality.integrated_lufs")
+        issue_codes.append("loudness_too_quiet")
+    if lufs is not None and max_lufs is not None and lufs - max_lufs > _EPSILON:
+        warning_refs.append("audio_quality.integrated_lufs")
+        issue_codes.append("loudness_too_loud")
+    if (
+        true_peak is not None
+        and max_true_peak is not None
+        and true_peak - max_true_peak > _EPSILON
+    ):
+        blocking_refs.append("audio_quality.true_peak_dbtp")
+        issue_codes.append("true_peak_above_limit")
+    if (
+        silence_ratio is not None
+        and max_silence_ratio is not None
+        and silence_ratio - max_silence_ratio > _EPSILON
+    ):
+        warning_refs.append("audio_quality.silence_ratio")
+        issue_codes.append("excessive_silence")
+    if silence_ratio is not None and silence_ratio > 0.5:
+        blocking_refs.append("audio_quality.silence_ratio")
+        issue_codes.append("blocking_silence")
+
+    if blocking_refs:
+        return _check(
+            "audio.loudness",
+            "blocking",
+            "Audio quality evidence has blocking loudness issues.",
+            evidence_refs=blocking_refs + warning_refs,
+            details={"issue_codes": _unique_ref(issue_codes)},
+        )
+    if warning_refs:
+        return _check(
+            "audio.loudness",
+            "warning",
+            "Audio quality evidence has loudness warnings.",
+            evidence_refs=warning_refs,
+            details={"issue_codes": _unique_ref(issue_codes)},
+        )
+    return _check("audio.loudness", "pass", "Audio loudness checks passed.")
+
+
+def _visual_sampling_check(input_payload: Mapping[str, Any]) -> dict[str, Any]:
+    visual_quality = _mapping(input_payload.get("visual_quality"))
+    if visual_quality is None:
+        return _check(
+            "visual.sampling",
+            "pass",
+            "Visual sampling check has insufficient evidence.",
+        )
+
+    duration = _video_duration_seconds(input_payload) or _probe_duration_seconds(input_payload)
+    black_seconds = _positive_number(
+        _first_present(
+            visual_quality.get("black_frame_seconds"),
+            _nested_value(visual_quality, ("summary", "black_frame_seconds")),
+        )
+    )
+    freeze_seconds = _positive_number(
+        _first_present(
+            visual_quality.get("freeze_frame_seconds"),
+            _nested_value(visual_quality, ("summary", "freeze_frame_seconds")),
+        )
+    )
+    low_light_ratio = _ratio(
+        _first_present(
+            visual_quality.get("low_light_ratio"),
+            _nested_value(visual_quality, ("summary", "low_light_ratio")),
+        )
+    )
+    black_items = _list(visual_quality.get("black_frames")) + _list(
+        visual_quality.get("black_frame_segments")
+    )
+    freeze_items = _list(visual_quality.get("freeze_frames")) + _list(
+        visual_quality.get("freeze_segments")
+    )
+    low_light_items = _list(visual_quality.get("low_light_segments"))
+
+    blocking_refs: list[str] = []
+    warning_refs: list[str] = []
+    issue_codes: list[str] = []
+
+    if black_items or (black_seconds is not None and black_seconds > _EPSILON):
+        warning_refs.append("visual_quality.black_frames")
+        issue_codes.append("black_frame_detected")
+    if freeze_items or (freeze_seconds is not None and freeze_seconds > _EPSILON):
+        warning_refs.append("visual_quality.freeze_frames")
+        issue_codes.append("freeze_frame_detected")
+    if low_light_items or (low_light_ratio is not None and low_light_ratio > 0.2):
+        warning_refs.append("visual_quality.low_light")
+        issue_codes.append("low_light_detected")
+
+    if duration is not None and black_seconds is not None and black_seconds / duration > 0.2:
+        blocking_refs.append("visual_quality.black_frame_seconds")
+        issue_codes.append("blocking_black_frames")
+    if freeze_seconds is not None and freeze_seconds > 2.0:
+        blocking_refs.append("visual_quality.freeze_frame_seconds")
+        issue_codes.append("blocking_freeze_frames")
+
+    if blocking_refs:
+        return _check(
+            "visual.sampling",
+            "blocking",
+            "Visual sampling evidence has blocking frame-quality issues.",
+            evidence_refs=blocking_refs + warning_refs,
+            details={"issue_codes": _unique_ref(issue_codes)},
+        )
+    if warning_refs:
+        return _check(
+            "visual.sampling",
+            "warning",
+            "Visual sampling evidence has frame-quality warnings.",
+            evidence_refs=warning_refs,
+            details={"issue_codes": _unique_ref(issue_codes)},
+        )
+    return _check("visual.sampling", "pass", "Visual sampling checks passed.")
 
 
 def _brand_keyword_check(input_payload: Mapping[str, Any]) -> dict[str, Any]:
@@ -461,6 +826,83 @@ def _audio_duration_seconds(input_payload: Mapping[str, Any]) -> float | None:
     )
 
 
+def _probe_duration_seconds(input_payload: Mapping[str, Any]) -> float | None:
+    probe = _media_probe(input_payload)
+    if probe is None:
+        return None
+    format_info = _mapping(probe.get("format")) or {}
+    return _first_seconds(
+        probe.get("duration_seconds"),
+        probe.get("duration"),
+        format_info.get("duration_seconds"),
+        format_info.get("duration"),
+    )
+
+
+def _media_probe(input_payload: Mapping[str, Any]) -> Mapping[str, Any] | None:
+    return _mapping(input_payload.get("media_probe")) or _mapping(input_payload.get("probe"))
+
+
+def _media_streams(probe: Mapping[str, Any]) -> list[dict[str, Any]]:
+    raw_streams = _list(probe.get("streams"))
+    streams: list[dict[str, Any]] = []
+    for raw_stream in raw_streams:
+        stream = _mapping(raw_stream)
+        if stream is None:
+            continue
+        kind = str(
+            stream.get("codec_type", stream.get("kind", stream.get("type", "")))
+        ).casefold()
+        if kind not in {"video", "audio"}:
+            continue
+        streams.append(
+            {
+                "kind": kind,
+                "width": _positive_number(stream.get("width")),
+                "height": _positive_number(stream.get("height")),
+                "fps": _positive_number(
+                    _first_present(
+                        stream.get("fps"),
+                        stream.get("frame_rate"),
+                        stream.get("avg_frame_rate"),
+                    )
+                ),
+            }
+        )
+    return streams
+
+
+def _probe_value(input_payload: Mapping[str, Any], key: str) -> Any:
+    probe = _media_probe(input_payload)
+    if probe is None:
+        return None
+    video_streams = [stream for stream in _media_streams(probe) if stream["kind"] == "video"]
+    if video_streams and key in video_streams[0]:
+        return video_streams[0][key]
+    video = _mapping(probe.get("video")) or _mapping(probe.get("video_stream")) or {}
+    if key in video:
+        return video.get(key)
+    return probe.get(key)
+
+
+def _delivery_profile(input_payload: Mapping[str, Any]) -> Mapping[str, Any] | None:
+    direct = _mapping(input_payload.get("platform_profile"))
+    if direct is not None:
+        return direct
+    delivery_targets = _mapping(input_payload.get("delivery_targets"))
+    if delivery_targets is None:
+        return None
+    profile = _mapping(delivery_targets.get("platform_profile"))
+    if profile is not None:
+        return profile
+    profiles = _list(delivery_targets.get("platform_profiles"))
+    for item in profiles:
+        profile = _mapping(item)
+        if profile is not None:
+            return profile
+    return None
+
+
 def _timeline_duration_seconds(timeline: Mapping[str, Any] | None) -> float | None:
     if timeline is None:
         return None
@@ -584,6 +1026,34 @@ def _positive_seconds(value: Any, default: float) -> float:
     return parsed if parsed > 0 else default
 
 
+def _number(value: Any) -> float | None:
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str):
+        text = value.strip()
+        if "/" in text:
+            numerator, denominator = text.split("/", 1)
+            try:
+                parsed_denominator = float(denominator)
+                if parsed_denominator == 0:
+                    return None
+                return float(numerator) / parsed_denominator
+            except ValueError:
+                return None
+        try:
+            return float(text)
+        except ValueError:
+            return None
+    return None
+
+
+def _positive_number(value: Any) -> float | None:
+    parsed = _number(value)
+    if parsed is None or parsed <= 0:
+        return None
+    return parsed
+
+
 def _first_seconds(*values: Any) -> float | None:
     for value in values:
         if value is None:
@@ -594,7 +1064,19 @@ def _first_seconds(*values: Any) -> float | None:
     return None
 
 
+def _first_present(*values: Any) -> Any:
+    for value in values:
+        if value is not None:
+            return value
+    return None
+
+
 def _ratio(value: Any) -> float | None:
+    if isinstance(value, str):
+        parsed = _number(value)
+        if parsed is None:
+            return None
+        value = parsed
     if not isinstance(value, (int, float)):
         return None
     ratio = float(value)
@@ -603,6 +1085,20 @@ def _ratio(value: Any) -> float | None:
     if ratio < 0.0 or ratio > 1.0:
         return None
     return ratio
+
+
+def _aspect_ratio(value: Any) -> float | None:
+    if isinstance(value, str) and ":" in value:
+        width, height = value.split(":", 1)
+        try:
+            parsed_height = float(height)
+            if parsed_height == 0:
+                return None
+            ratio = float(width) / parsed_height
+            return ratio if ratio > 0 else None
+        except ValueError:
+            return None
+    return _positive_number(value)
 
 
 def _nested_value(value: Mapping[str, Any], path: tuple[str, ...]) -> Any:

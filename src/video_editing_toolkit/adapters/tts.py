@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import hashlib
+import importlib
 import json
 import os
 import re
+from pathlib import Path
 from typing import Any, Mapping, Sequence
 
 from video_editing_toolkit.resource_guard import CPU_HEAVY_LIMITS, ErrorCode
@@ -25,10 +27,61 @@ _MODEL_PATH_ENV_VARS = (
     "VIDEO_TOOLKIT_MOSS_TTS_NANO_MODEL_PATH",
     "MOSS_TTS_NANO_MODEL_PATH",
 )
+_MODEL_ROOT_ENV_VARS = (
+    "VET_MOSS_TTS_NANO_MODEL_ROOT",
+    "VIDEO_TOOLKIT_MOSS_TTS_NANO_MODEL_ROOT",
+    "MOSS_TTS_NANO_MODEL_ROOT",
+)
+_TTS_BUNDLE_ENV_VARS = (
+    "VET_MOSS_TTS_NANO_TTS_BUNDLE",
+    "VIDEO_TOOLKIT_MOSS_TTS_NANO_TTS_BUNDLE",
+    "MOSS_TTS_NANO_TTS_BUNDLE",
+)
+_CODEC_BUNDLE_ENV_VARS = (
+    "VET_MOSS_TTS_NANO_CODEC_BUNDLE",
+    "VIDEO_TOOLKIT_MOSS_TTS_NANO_CODEC_BUNDLE",
+    "MOSS_TTS_NANO_CODEC_BUNDLE",
+)
 _MODEL_PATH_INPUT_KEYS = (
     "model_path",
     "onnx_model_path",
     "moss_tts_nano_model_path",
+)
+_MODEL_ROOT_INPUT_KEYS = (
+    "model_root",
+    "model_bundle_root",
+    "moss_tts_nano_model_root",
+)
+_TTS_BUNDLE_INPUT_KEYS = (
+    "tts_bundle",
+    "tts_bundle_path",
+    "moss_tts_nano_tts_bundle",
+)
+_CODEC_BUNDLE_INPUT_KEYS = (
+    "codec_bundle",
+    "codec_bundle_path",
+    "moss_tts_nano_codec_bundle",
+)
+_TTS_BUNDLE_DIRNAME = "MOSS-TTS-Nano-100M-ONNX"
+_CODEC_BUNDLE_DIRNAME = "MOSS-Audio-Tokenizer-Nano-ONNX"
+_TTS_BUNDLE_REQUIRED_FILES = (
+    "moss_tts_prefill.onnx",
+    "moss_tts_decode_step.onnx",
+    "moss_tts_local_decoder.onnx",
+    "moss_tts_local_cached_step.onnx",
+    "moss_tts_local_fixed_sampled_frame.onnx",
+    "moss_tts_global_shared.data",
+    "moss_tts_local_shared.data",
+    "tts_browser_onnx_meta.json",
+    "tokenizer.model",
+)
+_CODEC_BUNDLE_REQUIRED_FILES = (
+    "moss_audio_tokenizer_encode.onnx",
+    "moss_audio_tokenizer_encode.data",
+    "moss_audio_tokenizer_decode_full.onnx",
+    "moss_audio_tokenizer_decode_step.onnx",
+    "moss_audio_tokenizer_decode_shared.data",
+    "codec_browser_onnx_meta.json",
 )
 _CLONE_KEY_PARTS = ("voice_clone", "voiceprint")
 _LOCAL_PATH_PATTERNS = (
@@ -92,6 +145,29 @@ class TTSAdapter(BaseAdapter):
                 error_message=(
                     "voice clone requests are disabled in P1.1 and require a later explicit clone_voice capability."
                 ),
+            )
+
+        if _preflight_only(request.input):
+            preflight = build_runtime_preflight(request.input)
+            return AdapterResult(
+                status=AdapterStatus.SUCCEEDED,
+                output={
+                    "schema": VOICEOVER_PLAN_SCHEMA,
+                    "operation": "generate_voiceover",
+                    "synthesis_mode": "preflight_only",
+                    "reason_code": preflight["reason_code"],
+                    "runtime_preflight": preflight,
+                    "model_runtime": _model_runtime_public(
+                        configured=preflight["bundle_summary"]["configured"],
+                        reason_code=preflight["reason_code"],
+                    ),
+                    "audio_artifact_ref": None,
+                },
+                usage_metrics={
+                    "worker": "moss-tts-nano",
+                    "operation": "preflight_only",
+                    "preflight_status": preflight["status"],
+                },
             )
 
         plan = build_voiceover_plan(request, clone_requested=clone_requested)
@@ -275,6 +351,35 @@ def voiceover_manifest_artifact_bytes(payload: Mapping[str, Any]) -> bytes:
     return json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True).encode("utf-8")
 
 
+def build_runtime_preflight(input_payload: Mapping[str, Any]) -> dict[str, Any]:
+    runtime_check = _onnxruntime_cpu_check()
+    bundle_check = _bundle_preflight_check(input_payload)
+    checks = [runtime_check, *bundle_check["checks"]]
+
+    blocked = [check for check in checks if check["status"] == "blocked"]
+    unknown = [check for check in checks if check["status"] == "unknown"]
+    if blocked:
+        status = "blocked"
+        reason_code = blocked[0]["reason_code"]
+    elif unknown:
+        status = "unknown"
+        reason_code = unknown[0]["reason_code"]
+    else:
+        status = "passed"
+        reason_code = "tts.preflight_passed"
+
+    return {
+        "schema": "video_editing_toolkit.tts_runtime_preflight.v0",
+        "provider": "MOSS-TTS-Nano",
+        "backend": "onnx_cpu",
+        "status": status,
+        "reason_code": reason_code,
+        "execution_enabled": False,
+        "checks": checks,
+        "bundle_summary": bundle_check["bundle_summary"],
+    }
+
+
 def _normalize_segments(input_payload: Mapping[str, Any]) -> list[dict[str, Any]]:
     raw_segments = input_payload.get("segments")
     if isinstance(raw_segments, Sequence) and not isinstance(raw_segments, (str, bytes, bytearray)):
@@ -385,6 +490,11 @@ def _plan_only(input_payload: Mapping[str, Any]) -> bool:
     return mode == "plan_only" or _truthy(input_payload.get("dry_run"))
 
 
+def _preflight_only(input_payload: Mapping[str, Any]) -> bool:
+    mode = input_payload.get("synthesis_mode", input_payload.get("mode"))
+    return mode == "preflight_only" or _truthy(input_payload.get("preflight_only"))
+
+
 def _configured_model_path(input_payload: Mapping[str, Any]) -> str | None:
     for key in _MODEL_PATH_INPUT_KEYS:
         value = input_payload.get(key)
@@ -395,6 +505,143 @@ def _configured_model_path(input_payload: Mapping[str, Any]) -> str | None:
         if value:
             return value
     return None
+
+
+def _configured_bundle_paths(input_payload: Mapping[str, Any]) -> dict[str, Path | None]:
+    model_root = _configured_path_value(input_payload, _MODEL_ROOT_INPUT_KEYS, _MODEL_ROOT_ENV_VARS)
+    tts_bundle = _configured_path_value(input_payload, _TTS_BUNDLE_INPUT_KEYS, _TTS_BUNDLE_ENV_VARS)
+    codec_bundle = _configured_path_value(input_payload, _CODEC_BUNDLE_INPUT_KEYS, _CODEC_BUNDLE_ENV_VARS)
+
+    root_path = Path(model_root) if model_root else None
+    return {
+        "model_root": root_path,
+        "tts_bundle": Path(tts_bundle)
+        if tts_bundle
+        else (root_path / _TTS_BUNDLE_DIRNAME if root_path is not None else None),
+        "codec_bundle": Path(codec_bundle)
+        if codec_bundle
+        else (root_path / _CODEC_BUNDLE_DIRNAME if root_path is not None else None),
+    }
+
+
+def _configured_path_value(
+    input_payload: Mapping[str, Any],
+    input_keys: Sequence[str],
+    env_vars: Sequence[str],
+) -> str | None:
+    for key in input_keys:
+        value = input_payload.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    for env_var in env_vars:
+        value = os.environ.get(env_var)
+        if value:
+            return value
+    return None
+
+
+def _onnxruntime_cpu_check() -> dict[str, Any]:
+    try:
+        runtime = importlib.import_module("onnxruntime")
+    except ImportError:
+        return {
+            "name": "onnxruntime_cpu",
+            "status": "blocked",
+            "reason_code": "tts.onnxruntime_missing",
+            "details": {"importable": False, "cpu_execution_provider": False},
+        }
+
+    providers_getter = getattr(runtime, "get_available_providers", None)
+    if not callable(providers_getter):
+        return {
+            "name": "onnxruntime_cpu",
+            "status": "unknown",
+            "reason_code": "tts.onnxruntime_provider_unknown",
+            "details": {"importable": True, "cpu_execution_provider": "unknown"},
+        }
+
+    try:
+        providers = providers_getter()
+    except Exception:
+        return {
+            "name": "onnxruntime_cpu",
+            "status": "unknown",
+            "reason_code": "tts.onnxruntime_provider_unknown",
+            "details": {"importable": True, "cpu_execution_provider": "unknown"},
+        }
+
+    cpu_available = "CPUExecutionProvider" in providers
+    return {
+        "name": "onnxruntime_cpu",
+        "status": "passed" if cpu_available else "blocked",
+        "reason_code": "tts.onnxruntime_cpu_available" if cpu_available else "tts.onnxruntime_cpu_provider_missing",
+        "details": {
+            "importable": True,
+            "cpu_execution_provider": cpu_available,
+            "provider_count": len(providers) if isinstance(providers, Sequence) else None,
+        },
+    }
+
+
+def _bundle_preflight_check(input_payload: Mapping[str, Any]) -> dict[str, Any]:
+    paths = _configured_bundle_paths(input_payload)
+    tts_check = _required_files_check(
+        bundle_name="tts_bundle",
+        bundle_path=paths["tts_bundle"],
+        required_files=_TTS_BUNDLE_REQUIRED_FILES,
+    )
+    codec_check = _required_files_check(
+        bundle_name="codec_bundle",
+        bundle_path=paths["codec_bundle"],
+        required_files=_CODEC_BUNDLE_REQUIRED_FILES,
+    )
+    return {
+        "checks": [tts_check, codec_check],
+        "bundle_summary": {
+            "configured": paths["tts_bundle"] is not None and paths["codec_bundle"] is not None,
+            "model_root_configured": paths["model_root"] is not None,
+            "tts_bundle": _bundle_public_summary(tts_check),
+            "codec_bundle": _bundle_public_summary(codec_check),
+        },
+    }
+
+
+def _required_files_check(
+    *,
+    bundle_name: str,
+    bundle_path: Path | None,
+    required_files: Sequence[str],
+) -> dict[str, Any]:
+    if bundle_path is None:
+        return {
+            "name": bundle_name,
+            "status": "blocked",
+            "reason_code": f"tts.{bundle_name}_unconfigured",
+            "required_file_count": len(required_files),
+            "present_file_count": 0,
+            "missing_required_files": list(required_files),
+        }
+
+    present = [filename for filename in required_files if (bundle_path / filename).is_file()]
+    missing = [filename for filename in required_files if filename not in present]
+    return {
+        "name": bundle_name,
+        "status": "passed" if not missing else "blocked",
+        "reason_code": f"tts.{bundle_name}_complete" if not missing else f"tts.{bundle_name}_incomplete",
+        "required_file_count": len(required_files),
+        "present_file_count": len(present),
+        "missing_required_files": missing,
+    }
+
+
+def _bundle_public_summary(check: Mapping[str, Any]) -> dict[str, Any]:
+    return {
+        "configured": not str(check.get("reason_code", "")).endswith("_unconfigured"),
+        "complete": check.get("status") == "passed",
+        "required_file_count": check.get("required_file_count", 0),
+        "present_file_count": check.get("present_file_count", 0),
+        "missing_required_files": list(check.get("missing_required_files", ())),
+    }
 
 
 def _model_runtime_public(*, configured: bool, reason_code: str) -> dict[str, Any]:

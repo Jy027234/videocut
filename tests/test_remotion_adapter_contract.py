@@ -99,6 +99,143 @@ def test_remotion_create_render_job_returns_dispatcher_required_safe_spec() -> N
     assert_no_public_path_or_command_leak(result.output)
 
 
+def test_remotion_dispatcher_readiness_reports_ready_when_preflight_is_confirmed() -> None:
+    result = RemotionAdapter().handle(
+        _request(
+            CREATE_REMOTION_RENDER_JOB,
+            input_payload=_valid_input_payload(
+                {
+                    "dispatcher_capabilities": {
+                        "nodejs": {"status": "ready"},
+                        "chromium": True,
+                        "remotion": "available",
+                    },
+                    "dispatcher_policy": {
+                        "sandbox": {
+                            "execution": "dispatcher_managed",
+                            "filesystem": "artifact_ref_only",
+                        },
+                        "network": "deny_by_default",
+                    },
+                    "license_confirmation": {"confirmed": True},
+                }
+            ),
+        )
+    )
+
+    assert result.status == AdapterStatus.SUCCEEDED
+    readiness = result.output["dispatcher_readiness"]
+    assert readiness == result.output["render_job"]["dispatcher_readiness"]
+    assert readiness["status"] == "ready"
+    assert {check["name"]: check["status"] for check in readiness["checks"]} == {
+        "nodejs": "ready",
+        "chromium": "ready",
+        "remotion": "ready",
+        "license": "ready",
+        "sandbox": "ready",
+        "network": "ready",
+    }
+    assert result.usage_metrics["node_invocations"] == 0
+    assert result.usage_metrics["chromium_invocations"] == 0
+    assert_no_public_path_or_command_leak(result.output)
+
+
+def test_remotion_dispatcher_readiness_blocks_without_license_confirmation() -> None:
+    result = RemotionAdapter().handle(
+        _request(
+            CREATE_REMOTION_RENDER_JOB,
+            input_payload=_valid_input_payload(
+                {
+                    "dispatcher_capabilities": {
+                        "nodejs": True,
+                        "chromium": True,
+                        "remotion": True,
+                    },
+                    "dispatcher_policy": {
+                        "sandbox": {
+                            "execution": "dispatcher_managed",
+                            "filesystem": "artifact_ref_only",
+                        },
+                        "egress": "deny_by_default",
+                    },
+                }
+            ),
+        )
+    )
+
+    assert result.status == AdapterStatus.SUCCEEDED
+    readiness = result.output["dispatcher_readiness"]
+    checks = {check["name"]: check for check in readiness["checks"]}
+    assert readiness["status"] == "blocked"
+    assert checks["license"]["status"] == "blocked"
+    assert checks["license"]["code"] == "license_confirmation_required"
+    assert_no_public_path_or_command_leak(result.output)
+
+
+def test_remotion_dispatcher_readiness_blocks_noncompliant_sandbox_policy() -> None:
+    result = RemotionAdapter().handle(
+        _request(
+            CREATE_REMOTION_RENDER_JOB,
+            input_payload=_valid_input_payload(
+                {
+                    "dispatcher_capabilities": {
+                        "nodejs": True,
+                        "chromium": True,
+                        "remotion": True,
+                    },
+                    "dispatcher_policy": {
+                        "sandbox": {
+                            "execution": "caller_managed",
+                            "filesystem": "artifact_ref_only",
+                        },
+                        "network": "deny_by_default",
+                    },
+                    "license_confirmation": True,
+                }
+            ),
+        )
+    )
+
+    assert result.status == AdapterStatus.SUCCEEDED
+    readiness = result.output["dispatcher_readiness"]
+    checks = {check["name"]: check for check in readiness["checks"]}
+    assert readiness["status"] == "blocked"
+    assert checks["sandbox"]["status"] == "blocked"
+    assert checks["sandbox"]["code"] == "sandbox_policy_noncompliant"
+    assert_no_public_path_or_command_leak(result.output)
+
+
+def test_remotion_dispatcher_readiness_rejects_paths_and_commands_in_preflight_inputs() -> None:
+    unsafe_cases = [
+        {
+            "dispatcher_capabilities": {
+                "nodejs": "npx remotion render ./src/index.ts Main out.mp4",
+            },
+        },
+        {
+            "dispatcher_policy": {
+                "sandbox": {
+                    "execution": "dispatcher_managed",
+                    "filesystem": "C:\\Users\\runner\\template",
+                },
+            },
+        },
+    ]
+
+    for unsafe_extra in unsafe_cases:
+        result = RemotionAdapter().handle(
+            _request(
+                CREATE_REMOTION_RENDER_JOB,
+                input_payload=_valid_input_payload(unsafe_extra),
+            )
+        )
+
+        assert result.status == AdapterStatus.FAILED
+        assert result.error_code == "request.invalid"
+        assert result.output["stable_error_code"] == "remotion.unsafe_payload"
+        assert_no_public_path_or_command_leak(result.output)
+
+
 def test_remotion_create_render_job_materializes_artifact_when_store_is_available(
     tmp_path: Path,
 ) -> None:

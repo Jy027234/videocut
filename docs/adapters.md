@@ -225,6 +225,23 @@ Routing lives in `src/video_editing_toolkit/adapters/routing.py`.
 `resolve_route(capability)` returns the registered `CapabilityRoute`.
 `build_adapter(capability)` returns a fresh adapter instance for the route.
 
+P1 draft capabilities live behind explicit experimental routing helpers. They
+must stay disabled in the manifest until Platform Core rollout policy, approval
+gates, and resource limits are wired. The current P1.2 adapter surface is
+preflight-only:
+
+| Capability | Adapter | Contract status |
+| --- | --- | --- |
+| `audio.tts.generate_voiceover` | `moss_tts_nano` | `plan_only` and `preflight_only`; no download, no ONNX synthesis, no voice cloning. |
+| `video.qc.generate_report` | `qc` | Deterministic report from caller-safe timeline, probe, quality, and brand evidence. |
+| `video.template.validate_remotion_template` | `remotion` | Template metadata and prop validation only; no Node or Chromium execution. |
+| `video.template.create_remotion_render_job` | `remotion` | Dispatcher job descriptor and readiness checks only; no Remotion render execution. |
+
+The MOSS-TTS-Nano preflight expects a local ONNX bundle root containing
+`MOSS-TTS-Nano-100M-ONNX` and `MOSS-Audio-Tokenizer-Nano-ONNX`, or explicit TTS
+and codec bundle paths. Public output reports only aggregate readiness and
+missing file names, never the local bundle paths.
+
 ## Resource Limits
 
 Resource primitives live in `src/video_editing_toolkit/resource_guard`.
